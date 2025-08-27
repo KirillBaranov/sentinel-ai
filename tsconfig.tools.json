@@ -1,0 +1,11 @@
+{
+  "files": [],
+  "references": [
+    { "path": "packages/core" },
+    { "path": "packages/cli" },
+    { "path": "packages/providers/mock" },
+    { "path": "packages/providers/openai" },
+    { "path": "packages/providers/claude" },
+    { "path": "apps/demo" }
+  ]
+}
