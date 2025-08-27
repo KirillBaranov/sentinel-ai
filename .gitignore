@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+.yarn/
+.yarnrc.yml
+
+# Build outputs
+dist/
+out/
+build/
+coverage/
+*.log
+
+# TypeScript
+*.tsbuildinfo
+
+# IDE / Editors
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Local env
+.env
+.env.local
+.env.*
+!.env.example
+
+# Test snapshots
+*.snap

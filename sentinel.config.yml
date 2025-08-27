@@ -1,0 +1,51 @@
+version: 1
+
+language:
+  input: "ru"        # model input language for prompts/context
+  output: "ru"       # model output language for findings
+
+profile:
+  name: "frontend"   # one of: frontend | backend | e2e
+  root: "./profiles" # base dir for profiles
+
+limits:
+  maxComments: 7
+  largePrThreshold: 150
+  truncateBytesPerFile: 120000
+  truncateBytesPerADR: 60000
+
+output:
+  dual: true                  # YAML (machine) + Markdown (human)
+  heading: "## 🤖 Автоматический Code Review (advisory)"
+  strict: true
+  noIntro: true
+  noOutro: true
+
+render:
+  # markdown rendering knobs; tools can pick these up
+  showIcons: true
+  compactMetaLine: false      # if false → put meta on multiple lines
+  showFileLocatorFooter: true
+
+paths:
+  # relative to profile root, used by the loader to assemble absolute paths
+  rules: "docs/rules/rules.yml"
+  boundaries: "docs/rules/boundaries.json"
+  handbook:
+    - "docs/handbook/ARCHITECTURE.md"
+    - "docs/handbook/STYLEGUIDE.md"
+    - "docs/handbook/TESTING.md"
+    - "docs/handbook/ACCESSIBILITY.md"
+    - "docs/handbook/REVIEW_GUIDE.md"
+  adrDir: "docs/adr"
+
+providers:
+  # provider-specific hints (can be extended by packages/providers/*)
+  openai:
+    model: "gpt-4.1"
+    temperature: 0.2
+  claude:
+    model: "claude-3-5-sonnet"
+    temperature: 0.2
+  mock:
+    enabled: false
