@@ -15,6 +15,10 @@
     "inlineSources": true,
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
-    "resolveJsonModule": true
+    "resolveJsonModule": true,
+    "baseUrl": ".",
+    "paths": {
+      "@sentinel/core": ["packages/core/src/index.ts"]
+    }
   }
 }
