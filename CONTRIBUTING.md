@@ -78,7 +78,7 @@ pnpm test
 
 ⸻
 
-🧪 Testing
+## 🧪 Testing
 *	Unit tests:
 ```bash
 pnpm -r test
