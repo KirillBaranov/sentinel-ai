@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
+import { fileURLToPath } from 'node:url'
 
 /**
  * Build AI context (Markdown) from profile docs:
@@ -9,35 +10,31 @@ import crypto from 'node:crypto'
  * - adr/* (optional)
  *
  * Output:
- *   dist/ai-review-context.md
- *
- * Design goals:
- * - Deterministic ordering and content hashing
- * - Clear section markers for downstream tooling
- * - Size guards (max bytes / approx tokens)
- * - Future-proof options (toggle ADR, include boundaries, etc.)
+ *   dist/ai-review-context.md  (в корне репозитория)
  */
 
 export interface BuildContextOptions {
   profile: string                        // e.g. 'frontend'
-  repoRoot?: string                      // default: process.cwd()
-  outFile?: string                       // default: dist/ai-review-context.md
+  repoRoot?: string                      // default: <REPO_ROOT> (из пути файла)
+  profilesDir?: string                   // default: auto-discover (profiles | packages/profiles)
+  outFile?: string                       // default: dist/ai-review-context.md (в корне)
   includeADR?: boolean                   // default: true
   includeBoundaries?: boolean            // default: true
   prettyJson?: number | undefined        // default: 2
-  maxBytes?: number                      // hard limit of output bytes; default: 1_500_000 (~1.5MB)
-  maxApproxTokens?: number | undefined   // soft limit; if set, truncates ADR section first
+  maxBytes?: number                      // hard limit ~1.5MB
+  maxApproxTokens?: number | undefined   // soft limit; если задан, сначала режем ADR
 }
 
 type FileBlob = { path: string; content: string; bytes: number }
 
+// ── вычисляем корень репо относительно packages/cli/src/context.ts
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const REPO_ROOT = path.resolve(__dirname, '../../../')
+
 /** Normalize newlines, strip BOM, trim trailing spaces per line */
 function normalizeText(s: string): string {
-  // strip BOM
-  if (s.charCodeAt(0) === 0xFEFF) s = s.slice(1)
-  // normalize to \n
+  if (s.length && s.charCodeAt(0) === 0xfeff) s = s.slice(1)
   s = s.replace(/\r\n?/g, '\n')
-  // trim trailing spaces
   s = s.split('\n').map(l => l.replace(/[ \t]+$/g, '')).join('\n')
   return s
 }
@@ -54,10 +51,8 @@ function safeRead(filePath: string): string | null {
   }
 }
 
-/** Approximate token count (very rough, good enough for guardrails) */
+/** Approximate token count (очень грубо) */
 function approxTokens(s: string): number {
-  // split by whitespace/punct, typical heuristic ~ 4 chars/token in English
-  // We’ll just count words as tokens-ish.
   return s.split(/\s+/g).filter(Boolean).length
 }
 
@@ -71,7 +66,6 @@ function listMarkdown(dir: string): string[] {
 
 function listADR(dir: string): string[] {
   if (!fs.existsSync(dir)) return []
-  // allow *.md, *.adr.md, numeric prefixes
   return fs.readdirSync(dir)
     .filter(f => /\.md$/i.test(f))
     .map(f => path.join(dir, f))
@@ -89,7 +83,7 @@ function readBlobs(files: string[]): FileBlob[] {
   return out
 }
 
-function ensureDir(p: string) {
+function ensureDirForFile(p: string) {
   fs.mkdirSync(path.dirname(p), { recursive: true })
 }
 
@@ -98,18 +92,42 @@ function buildTOC(blobs: FileBlob[], baseLabel: string): string {
   if (blobs.length === 0) return ''
   const rel = (p: string) => p.replace(/^.*?profiles\//, 'profiles/')
   const items = blobs.map(b => `- ${rel(b.path)}`).join('\n')
-  return [
-    `### ${baseLabel} TOC`,
-    '',
-    items,
-    ''
-  ].join('\n')
+  return [`### ${baseLabel} TOC`, '', items, ''].join('\n')
+}
+
+function resolveProfilesDir(repoRoot: string, explicit?: string): string {
+  // 1) явный приоритет: аргумент или ENV
+  const envDir = process.env.SENTINEL_PROFILES_DIR
+  const candidateExplicit = explicit ?? envDir
+  if (candidateExplicit) {
+    const abs = path.isAbsolute(candidateExplicit)
+      ? candidateExplicit
+      : path.join(repoRoot, candidateExplicit)
+    if (fs.existsSync(abs)) return abs
+    throw new Error(`profiles dir not found (explicit): ${abs}`)
+  }
+
+  // 2) авто-поиск по распространённым локациям
+  const candidates = [
+    path.join(repoRoot, 'profiles'),
+    path.join(repoRoot, 'packages', 'profiles')
+  ]
+  for (const c of candidates) {
+    if (fs.existsSync(c)) return c
+  }
+
+  throw new Error(
+    `profiles dir not found. Tried:\n` +
+    candidates.map(c => ` - ${c}`).join('\n') +
+    `\nYou can pass --profiles-dir or set SENTINEL_PROFILES_DIR.`
+  )
 }
 
 export function buildContext(opts: BuildContextOptions) {
   const {
     profile,
-    repoRoot = process.cwd(),
+    repoRoot = REPO_ROOT,
+    profilesDir, // может быть относительным или абсолютным
     outFile = path.join(repoRoot, 'dist', 'ai-review-context.md'),
     includeADR = true,
     includeBoundaries = true,
@@ -118,32 +136,29 @@ export function buildContext(opts: BuildContextOptions) {
     maxApproxTokens
   } = opts
 
-  const profileRoot = path.join(repoRoot, 'profiles', profile, 'docs')
+  const PROFILES_DIR = resolveProfilesDir(repoRoot, profilesDir)
+  const profileDocs = path.join(PROFILES_DIR, profile, 'docs')
 
-  const hbDir = path.join(profileRoot, 'handbook')
-  const rulesPath = path.join(profileRoot, 'rules', 'rules.json')
-  const boundariesPath = path.join(profileRoot, 'rules', 'boundaries.json')
-  const adrDir = path.join(profileRoot, 'adr')
+  const hbDir = path.join(profileDocs, 'handbook')
+  const rulesPath = path.join(profileDocs, 'rules', 'rules.json')
+  const boundariesPath = path.join(profileDocs, 'rules', 'boundaries.json')
+  const adrDir = path.join(profileDocs, 'adr')
 
-  // 1) Collect handbook
+  // 1) Handbook
   const hbFiles = listMarkdown(hbDir)
   const hbBlobs = readBlobs(hbFiles)
 
-  // 2) Read rules.json
+  // 2) Rules
   const rulesRaw = safeRead(rulesPath)
-  if (!rulesRaw) {
-    throw new Error(`rules.json not found: ${rulesPath}`)
-  }
+  if (!rulesRaw) throw new Error(`rules.json not found: ${rulesPath}`)
   let rulesPretty = ''
   try {
-    const parsed = JSON.parse(rulesRaw)
-    rulesPretty = JSON.stringify(parsed, null, prettyJson)
-  } catch (e) {
-    // Keep original if not valid JSON; downstream validator will fail anyway
+    rulesPretty = JSON.stringify(JSON.parse(rulesRaw), null, prettyJson)
+  } catch {
     rulesPretty = rulesRaw
   }
 
-  // 3) Read boundaries.json (optional)
+  // 3) Boundaries (optional)
   let boundariesPretty = ''
   if (includeBoundaries) {
     const boundariesRaw = safeRead(boundariesPath)
@@ -156,33 +171,35 @@ export function buildContext(opts: BuildContextOptions) {
     }
   }
 
-  // 4) Collect ADR (optional)
+  // 4) ADR (optional)
   const adrFiles = includeADR ? listADR(adrDir) : []
   let adrBlobs = includeADR ? readBlobs(adrFiles) : []
 
-  // Deterministic metadata
+  // Metadata
   const ts = new Date().toISOString()
   const meta = {
     profile,
+    profilesDir: PROFILES_DIR,
     generatedAt: ts,
     handbookFiles: hbBlobs.map(b => b.path),
     rulesFile: rulesPath,
     boundariesFile: includeBoundaries && fs.existsSync(boundariesPath) ? boundariesPath : null,
-    adrFiles: adrBlobs.map(b => b.path),
+    adrFiles: adrBlobs.map(b => b.path)
   }
   const metaPretty = JSON.stringify(meta, null, 2)
 
-  // 5) Build sections with markers for downstream parsers
+  // Sections
   const parts: string[] = []
 
-  parts.push(`---`)
-  parts.push(`title: Sentinel AI Review Context`)
+  parts.push('---')
+  parts.push('title: Sentinel AI Review Context')
   parts.push(`profile: ${profile}`)
   parts.push(`generatedAt: ${ts}`)
   parts.push(`hashSeed: ${sha1(JSON.stringify(meta))}`)
-  parts.push(`---`)
+  parts.push('---')
   parts.push('')
 
+  // SUMMARY
   parts.push('<!-- SENTINEL:SECTION:SUMMARY -->')
   parts.push('# Sentinel AI — Review Context')
   parts.push('')
@@ -195,7 +212,7 @@ export function buildContext(opts: BuildContextOptions) {
   parts.push('<!-- SENTINEL:SECTION:SUMMARY:END -->')
   parts.push('')
 
-  // Handbook
+  // HANDBOOK
   parts.push('<!-- SENTINEL:SECTION:HANDBOOK -->')
   parts.push('# Handbook')
   parts.push('')
@@ -211,7 +228,7 @@ export function buildContext(opts: BuildContextOptions) {
   parts.push('<!-- SENTINEL:SECTION:HANDBOOK:END -->')
   parts.push('')
 
-  // Rules
+  // RULES
   parts.push('<!-- SENTINEL:SECTION:RULES -->')
   parts.push('# Rules')
   parts.push('')
@@ -230,7 +247,7 @@ export function buildContext(opts: BuildContextOptions) {
   parts.push('<!-- SENTINEL:SECTION:RULES:END -->')
   parts.push('')
 
-  // ADR (optional, can be truncated later by guardrails)
+  // ADR
   if (includeADR && adrBlobs.length > 0) {
     parts.push('<!-- SENTINEL:SECTION:ADR -->')
     parts.push('# ADR')
@@ -251,11 +268,10 @@ export function buildContext(opts: BuildContextOptions) {
   let output = parts.join('\n')
   const baseHash = sha1(output)
 
-  // 6) Guardrails: trim by approx tokens first (drop ADR section if too big), then enforce byte limit
+  // Guardrails — soft (tokens)
   if (maxApproxTokens) {
     const tokens = approxTokens(output)
     if (tokens > maxApproxTokens) {
-      // Drop ADR completely first
       output = output.replace(
         /\n?<!-- SENTINEL:SECTION:ADR -->[\s\S]*?<!-- SENTINEL:SECTION:ADR:END -->/m,
         '\n<!-- SENTINEL:SECTION:ADR -->\n# ADR\n\n*Omitted due to context size constraints.*\n<!-- SENTINEL:SECTION:ADR:END -->\n'
@@ -263,10 +279,9 @@ export function buildContext(opts: BuildContextOptions) {
     }
   }
 
-  // Enforce hard byte cap
+  // Guardrails — hard (bytes)
   if (Buffer.byteLength(output, 'utf8') > maxBytes) {
-    // As last resort, collapse handbook bodies but keep TOC and rules
-    const collapsed = output
+    output = output
       .replace(
         /<!-- SENTINEL:SECTION:HANDBOOK -->[\s\S]*?<!-- SENTINEL:SECTION:HANDBOOK:END -->/m,
         '<!-- SENTINEL:SECTION:HANDBOOK -->\n# Handbook\n\n*Omitted due to size limit.*\n<!-- SENTINEL:SECTION:HANDBOOK:END -->\n'
@@ -275,21 +290,17 @@ export function buildContext(opts: BuildContextOptions) {
         /<!-- SENTINEL:SECTION:ADR -->[\s\S]*?<!-- SENTINEL:SECTION:ADR:END -->/m,
         '<!-- SENTINEL:SECTION:ADR -->\n# ADR\n\n*Omitted due to size limit.*\n<!-- SENTINEL:SECTION:ADR:END -->\n'
       )
-    output = collapsed
   }
 
-  // Final checksum (covers post-trim content)
+  // Final checksum
   const finalHash = sha1(output)
 
-  // Append footer with checksums for traceability
-  output += '\n'
-  output += '---\n'
-  output += '## Checksums\n'
-  output += '```json\n'
+  // Footer with checksums
+  output += '\n---\n## Checksums\n```json\n'
   output += JSON.stringify({ baseHash, finalHash }, null, 2) + '\n'
   output += '```\n'
 
-  ensureDir(outFile)
+  ensureDirForFile(outFile)
   fs.writeFileSync(outFile, output, 'utf8')
 
   return {
@@ -301,12 +312,12 @@ export function buildContext(opts: BuildContextOptions) {
   }
 }
 
-/**
- * Optional: small wrapper to use from CLI index (or directly)
- */
+/** CLI wrapper */
 export async function buildContextCLI() {
   const profile = readArg('--profile', 'frontend')
   const outFile = readArg('--out', undefined)
+  const repoRoot = readArg('--repo-root', REPO_ROOT)
+  const profilesDir = readArg('--profiles-dir', undefined) // можно передать относительный
   const includeADR = readBool('--include-adr', true)
   const includeBoundaries = readBool('--include-boundaries', true)
   const maxBytes = readInt('--max-bytes', 1_500_000)
@@ -315,24 +326,30 @@ export async function buildContextCLI() {
   const res = buildContext({
     profile,
     outFile,
+    repoRoot,
+    profilesDir,
     includeADR,
     includeBoundaries,
     maxBytes,
     maxApproxTokens
   })
-  // UX output
-  console.log(`[context] wrote ${res.outFile} (${res.bytes} bytes, ~${res.approxTokens} tokens)`)
+  console.log(
+    `[context] wrote ${path.relative(String(repoRoot), res.outFile)} ` +
+    `(${res.bytes} bytes, ~${res.approxTokens} tokens)`
+  )
   console.log(`[context] hash: ${res.finalHash}`)
 }
 
+/** tiny argv helpers */
 function readArg(flag: string, fallback?: string) {
   const i = process.argv.indexOf(flag)
   if (i >= 0 && process.argv[i + 1]) return process.argv[i + 1]
   return fallback
 }
 function readBool(flag: string, fallback: boolean) {
+  const name = flag.replace(/^--/, '')
   if (process.argv.includes(flag)) return true
-  if (process.argv.includes(`--no-${flag.replace(/^--/, '')}`)) return false
+  if (process.argv.includes(`--no-${name}`)) return false
   return fallback
 }
 function readInt(flag: string, fallback?: number) {
@@ -342,7 +359,7 @@ function readInt(flag: string, fallback?: number) {
   return Number.isFinite(n) ? n : fallback
 }
 
-// Allow direct execution via ts-node if needed
+// Allow direct execution via node/tsx
 if (import.meta.url === `file://${process.argv[1]}`) {
   buildContextCLI().catch(err => {
     console.error(err)

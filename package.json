@@ -43,8 +43,10 @@
     "ci:check": "pnpm lint && pnpm type-check && pnpm test -- --run",
     "clean": "pnpm -r run clean",
     "clean:all": "rm -rf node_modules && rm -rf packages/*/node_modules && rm -rf apps/*/node_modules",
-    "sentinel:context": "pnpm --filter @sentinel/cli exec ts-node src/index.ts build-context --profile frontend",
-    "sentinel:review": "pnpm --filter @sentinel/cli exec ts-node src/index.ts review --diff ../../fixtures/changes.diff --out-json ../../review.json --out-md ../../review.md --profile frontend",
+
+    "sentinel:context": "pnpm --filter @sentinel/cli exec tsx src/index.ts build-context --profile frontend",
+    "sentinel:review": "pnpm --filter @sentinel/cli exec tsx src/index.ts review --diff ../../fixtures/changes.diff --out-json ../../review.json --out-md ../../review.md --profile frontend",
+
     "sentinel:context:prod": "pnpm -r build && pnpm --filter @sentinel/cli exec node dist/index.js build-context --profile frontend",
     "sentinel:review:prod": "pnpm -r build && pnpm --filter @sentinel/cli exec node dist/index.js review --diff ../../fixtures/changes.diff --out-json ../../review.json --out-md ../../review.md --profile frontend"
   },

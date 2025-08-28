@@ -3,6 +3,7 @@ import type { Severity } from './types.js'
 
 export interface ReviewFinding {
   rule: string
+  area: string
   severity: Severity
   file: string
   /**
@@ -10,7 +11,7 @@ export interface ReviewFinding {
    */
   locator: string
   /**
-   * Each item should start with a bracketed locator, e.g.:
+   * Каждая строка начинается с локатора:
    * [L45-L53] message
    * [HUNK:@@ -12,7 +12,9 @@] message
    * [symbol:FooBar] message
@@ -33,9 +34,7 @@ export interface ReviewJson {
   }
 }
 
-/**
- * Group findings by severity in canonical order.
- */
+/** Группировка по severity в каноническом порядке */
 export function groupBySeverity(findings: ReviewFinding[]) {
   const order: Severity[] = ['critical', 'major', 'minor', 'info']
   const map = new Map<Severity, ReviewFinding[]>()
@@ -44,16 +43,12 @@ export function groupBySeverity(findings: ReviewFinding[]) {
   return { order, map }
 }
 
-/**
- * SHA1 helper (used for fingerprinting).
- */
+/** SHA1 helper (для fingerprint) */
 export function sha1(content: string): string {
   return crypto.createHash('sha1').update(content).digest('hex')
 }
 
-/**
- * Deterministic fingerprint for a finding.
- */
+/** Детерминированный fingerprint */
 export function makeFingerprint(
   rule: string,
   file: string,
