@@ -1,0 +1,16 @@
+{
+  "layers": [
+    { "name": "app", "path": "src/app/**", "index": 3 },
+    { "name": "feature", "path": "src/features/*/**", "index": 2 },
+    { "name": "shared", "path": "src/shared/**", "index": 1 }
+  ],
+  "forbidden": [
+    {
+      "rule": "feature-to-feature-internal",
+      "from": { "glob": "src/features/*/**" },
+      "to":   { "glob": "src/features/*/internal/**" },
+      "allowVia": ["src/shared/ports/**"],
+      "explain": "Features must not import other features' internal modules directly; use shared ports/adapters."
+    }
+  ]
+}

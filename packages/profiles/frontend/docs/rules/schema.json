@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sentinel-ai.dev/schemas/rules.json",
+  "title": "Sentinel Rules Schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "domain", "rules"],
+  "properties": {
+    "version": { "type": "integer", "minimum": 1 },
+    "domain": { "type": "string", "minLength": 1 },
+    "metadata": { "type": "object", "additionalProperties": true },
+    "rules": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "area", "severity", "description", "link"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z0-9_.-]+$" },
+          "area": { "type": "string" },
+          "severity": { "enum": ["critical", "major", "minor", "info"] },
+          "description": { "type": "string", "minLength": 1 },
+          "link": { "type": "string" },
+          "examples": { "type": "object", "additionalProperties": true },
+          "scope": {
+            "type": "array",
+            "items": { "enum": ["changed", "file", "module", "project"] },
+            "uniqueItems": true
+          },
+          "trigger": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["type"],
+            "properties": {
+              "type": { "enum": ["pattern", "heuristic", "llm", "hybrid"] },
+              "signals": {
+                "type": "array",
+                "items": { "type": "string" },
+                "uniqueItems": true
+              }
+            }
+          },
+          "status": { "enum": ["active", "experimental", "deprecated"] },
+          "version": { "type": "integer", "minimum": 1 },
+          "experiments": { "type": "object", "additionalProperties": true },
+          "ask_feedback": { "type": "boolean" }
+        }
+      }
+    }
+  }
+}

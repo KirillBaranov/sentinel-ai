@@ -1,235 +1,50 @@
 {
-  "version": "1.3.0",
-  "meta": {
-    "mode": "advisory",
-    "maxComments": 7,
-    "largePrThreshold": 150,
-    "priority": ["architecture", "testing", "a11y", "dx"],
-    "enforceSeverity": true,
-    "ignorePaths": [
-      "dist/**",
-      "coverage/**",
-      "node_modules/**",
-      "**/*.snap",
-      "**/*.map",
-      "**/*.min.*"
-    ],
-    "dedupePolicy": "per-rule",
-    "groupSimilarFindings": true,
-    "ciFailNote": "Fix CI (lint/ts/tests) first, then rerun AI review.",
-    "language": "ru",
-    "outputFormat": {
-      "dual": true,
-      "machine": {
-        "format": "json",
-        "rootKey": "ai_review",
-        "schema": {
-          "requiredFields": [
-            "rule",
-            "link",
-            "severity",
-            "area",
-            "file",
-            "locator",
-            "finding",
-            "suggestion"
-          ],
-          "fingerprint": "sha1(rule + '|' + file + '|' + locator)"
-        }
-      },
-      "heading": "## 🤖 Автоматический Code Review (advisory)",
-      "fields": {
-        "severity": "Серьёзность",
-        "area": "Область",
-        "rule": "Правило",
-        "finding": "Находка",
-        "why": "Почему",
-        "suggestion": "Предложение"
-      },
-      "severityLabels": {
-        "critical": "критично",
-        "advisory": "рекомендация"
-      },
-      "areaLabels": {
-        "architecture": "архитектура",
-        "testing": "тестирование",
-        "a11y": "доступность",
-        "dx": "DX",
-        "performance": "производительность",
-        "naming": "нейминг"
-      },
-      "strict": true,
-      "noIntro": true,
-      "noOutro": true,
-      "sort": {
-        "by": ["severity", "meta.priority"],
-        "severityOrder": ["критично", "рекомендация"]
-      }
-    }
+  "version": 1,
+  "domain": "frontend",
+  "metadata": {
+    "updatedAt": "2025-08-28",
+    "owner": "profiles/frontend"
   },
   "rules": [
     {
-      "id": "ARCH_BOUNDARIES",
-      "area": "architecture",
+      "id": "arch.modular-boundaries",
+      "area": "Architecture",
       "severity": "critical",
-      "owner": "@frontend-arch",
-      "description": "Respect import boundaries (see boundaries.json)",
-      "link": "docs/handbook/ARCHITECTURE.md#import-boundaries",
+      "description": "Enforce module boundaries; no cross-feature imports without adapter.",
+      "link": "docs/handbook/architecture.md#module-boundaries",
       "examples": {
-        "bad": "features imports pages/*",
-        "good": "pages compose features; features depend on entities/shared"
-      }
+        "bad": ["feature-a imports feature-b/internal"],
+        "good": ["feature-a -> shared/ports adapter -> feature-b"]
+      },
+      "scope": ["changed", "project"],
+      "trigger": {
+        "type": "hybrid",
+        "signals": ["import-graph", "path-alias"]
+      },
+      "status": "active",
+      "version": 1,
+      "experiments": { "rollout": 1.0 },
+      "ask_feedback": true
     },
     {
-      "id": "ARCH_LAYERING_PAGES",
-      "area": "architecture",
-      "severity": "critical",
-      "owner": "@frontend-arch",
-      "description": "pages may import features, entities, ui, orgui, shared, modules",
-      "link": "docs/handbook/ARCHITECTURE.md#import-gradient"
-    },
-    {
-      "id": "ARCH_LAYERING_FEATURES",
-      "area": "architecture",
-      "severity": "critical",
-      "owner": "@frontend-arch",
-      "description": "features may import entities, ui, shared, modules",
-      "link": "docs/handbook/ARCHITECTURE.md#import-gradient"
-    },
-    {
-      "id": "ARCH_LAYERING_ENTITIES",
-      "area": "architecture",
-      "severity": "critical",
-      "owner": "@frontend-arch",
-      "description": "entities may import ui, shared, modules",
-      "link": "docs/handbook/ARCHITECTURE.md#import-gradient"
-    },
-    {
-      "id": "ARCH_LAYERING_UI",
-      "area": "architecture",
-      "severity": "advisory",
-      "owner": "@frontend-core",
-      "description": "ui-components import horizontally within ui-components only",
-      "link": "docs/handbook/ARCHITECTURE.md#import-gradient"
-    },
-    {
-      "id": "ARCH_LAYERING_ORGUI",
-      "area": "architecture",
-      "severity": "advisory",
-      "owner": "@frontend-core",
-      "description": "org-components may import ui-components and shared",
-      "link": "docs/handbook/ARCHITECTURE.md#import-gradient"
-    },
-    {
-      "id": "ARCH_LAYERING_MODULES",
-      "area": "architecture",
-      "severity": "advisory",
-      "owner": "@frontend-core",
-      "description": "modules may import modules, ui-components, shared",
-      "link": "docs/handbook/ARCHITECTURE.md#import-gradient"
-    },
-    {
-      "id": "TESTS_FOR_FEATURES",
-      "area": "testing",
-      "severity": "advisory",
-      "owner": "@qa-frontend",
-      "description": "When touching src/features/** ensure relevant tests exist",
-      "link": "docs/handbook/TESTING.md#mandatory",
+      "id": "style.no-todo-comment",
+      "area": "DX",
+      "severity": "minor",
+      "description": "Avoid TODO comments in code; track via issue links instead.",
+      "link": "docs/handbook/style.md#no-todo",
       "examples": {
-        "bad": "feature edited, no *.spec.ts changed",
-        "good": "added RTL test covering user flow"
-      }
-    },
-    {
-      "id": "A11Y_DIALOG_FOCUS",
-      "area": "a11y",
-      "severity": "advisory",
-      "owner": "@frontend-a11y",
-      "description": "Dialogs/drawers manage focus (focus trap + initial focus) and are keyboard reachable",
-      "link": "docs/handbook/ACCESSIBILITY.md#dialogs",
-      "examples": {
-        "bad": "modal opens with no focus; ESC does nothing",
-        "good": "focus sent to first interactive control; ESC closes"
-      }
-    },
-    {
-      "id": "VUE_SCRIPT_SETUP_ONLY",
-      "area": "vue",
-      "severity": "advisory",
-      "owner": "@frontend-core",
-      "description": "Use <script setup lang=\"ts\"> only; no Options API",
-      "link": "docs/handbook/STYLEGUIDE.md#vue--ts"
-    },
-    {
-      "id": "VUE_TYPED_EMITS",
-      "area": "vue",
-      "severity": "advisory",
-      "owner": "@frontend-core",
-      "description": "Define typed emits and props in components",
-      "link": "docs/handbook/STYLEGUIDE.md#vue--ts",
-      "examples": {
-        "bad": "defineEmits(['change'])",
-        "good": "defineEmits<{(e:'change', v:Row): void}>()"
-      }
-    },
-    {
-      "id": "TS_NO_IMPLICIT_ANY",
-      "area": "typescript",
-      "severity": "advisory",
-      "owner": "@frontend-core",
-      "description": "noImplicitAny must be respected",
-      "link": "docs/handbook/STYLEGUIDE.md#vue--ts"
-    },
-    {
-      "id": "TS_NO_UNCHECKED_INDEXED_ACCESS",
-      "area": "typescript",
-      "severity": "advisory",
-      "owner": "@frontend-core",
-      "description": "noUncheckedIndexedAccess must be respected",
-      "link": "docs/handbook/STYLEGUIDE.md#vue--ts"
-    },
-    {
-      "id": "NAMING_COMPONENTS",
-      "area": "dx",
-      "severity": "advisory",
-      "owner": "@frontend-core",
-      "description": "Components use PascalCase; composables use useXxx; events use noun:verb or update:modelValue",
-      "link": "docs/handbook/STYLEGUIDE.md#naming",
-      "examples": {
-        "bad": "configuration-group.vue, useconfiguration.ts",
-        "good": "ConfigurationGroup.vue, useConfiguration.ts, row:removed"
-      }
+        "bad": ["// TODO: remove later"],
+        "good": ["// see ISSUE-123 for follow-up"]
+      },
+      "scope": ["changed"],
+      "trigger": {
+        "type": "pattern",
+        "signals": ["added-line:TODO"]
+      },
+      "status": "active",
+      "version": 1,
+      "experiments": { "rollout": 1.0 },
+      "ask_feedback": false
     }
-  ],
-  "paths": {
-    "ui": "src/ui-components/**",
-    "orgui": "src/org-components/**",
-    "modules": "src/modules/**",
-    "features": "src/features/**",
-    "entities": "src/entities/**",
-    "pages": "src/pages/**",
-    "shared": "src/shared/**"
-  },
-  "vue": { "scriptSetupOnly": true, "typedEmits": true },
-  "typescript": { "noImplicitAny": true, "noUncheckedIndexedAccess": true },
-  "testing": { "framework": "vitest", "rtl": true, "requireTestsWhenTouching": ["src/features/**"] },
-  "architecture": {
-    "boundaries": "./docs/rules/boundaries.json",
-    "layering": {
-      "pagesImport": ["features", "entities", "ui", "orgui", "shared", "modules"],
-      "featuresImport": ["entities", "ui", "shared", "modules"],
-      "entitiesImport": ["ui", "shared", "modules"],
-      "uiImport": ["ui"],
-      "orguiImport": ["ui", "shared"],
-      "modulesImport": ["modules", "ui", "shared"]
-    }
-  },
-  "docs": {
-    "links": {
-      "style": "docs/handbook/STYLEGUIDE.md",
-      "arch": "docs/handbook/ARCHITECTURE.md",
-      "test": "docs/handbook/TESTING.md",
-      "a11y": "docs/handbook/ACCESSIBILITY.md"
-    }
-  }
+  ]
 }
