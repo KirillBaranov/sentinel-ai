@@ -48,7 +48,10 @@
     "sentinel:review": "pnpm --filter @sentinel/cli exec tsx src/index.ts review --diff ../../fixtures/changes.diff --out-json ../../review.json --out-md ../../review.md --profile frontend",
 
     "sentinel:context:prod": "pnpm -r build && pnpm --filter @sentinel/cli exec node dist/index.js build-context --profile frontend",
-    "sentinel:review:prod": "pnpm -r build && pnpm --filter @sentinel/cli exec node dist/index.js review --diff ../../fixtures/changes.diff --out-json ../../review.json --out-md ../../review.md --profile frontend"
+    "sentinel:review:prod": "pnpm -r build && pnpm --filter @sentinel/cli exec node dist/index.js review --diff ../../fixtures/changes.diff --out-json ../../review.json --out-md ../../review.md --profile frontend",
+
+    "sentinel:render-md": "pnpm --filter @sentinel/cli exec tsx src/index.ts render-md --in dist/review.json --out dist/review.human.md",
+    "sentinel:render-html": "pnpm --filter @sentinel/cli exec tsx src/index.ts render-html --in dist/review.json --out dist/review.html"
   },
   "lint-staged": {
     "*.{ts,tsx,js,jsx,json,md,yml,yaml}": [

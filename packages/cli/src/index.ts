@@ -1,38 +1,55 @@
-#!/usr/bin/env node
 import { Command } from 'commander'
 import { buildContextCLI } from './context.js'
 import { runReviewCLI } from './review.js'
+import { renderMdCLI } from './cmd/render-md.js'
+import { renderHtmlCLI } from './cmd/render-html.js'
 
 const program = new Command()
 
 program
   .name('sentinel')
-  .description('Sentinel AI — CLI for code review automation')
-  .version('0.1.0')
+  .description('Sentinel AI CLI')
 
-// Build context command
 program
   .command('build-context')
-  .description('Build AI context (handbook + rules + ADR) into dist/ai-review-context.md')
-  .option('--profile <profile>', 'Profile to use (default: frontend)', 'frontend')
-  .option('--out <outFile>', 'Output file (default: dist/ai-review-context.md)')
+  .option('--profile <profile>', 'profile', 'frontend')
+  .option('--profiles-dir <dir>', 'override profiles dir')
+  .option('--out <outFile>', 'output file (repo-root relative)')
   .action(async (opts) => {
-    await buildContextCLI()
+    await buildContextCLI({ ...opts })
   })
 
-// Review command
 program
   .command('review')
-  .description('Run AI review on a unified diff')
-  .requiredOption('--diff <file>', 'Unified diff file to review')
-  .option('--profile <profile>', 'Profile to use (default: frontend)', 'frontend')
-  .option('--out-json <file>', 'Output findings JSON file', 'review.json')
-  .option('--out-md <file>', 'Output findings Markdown file', 'review.md')
+  .requiredOption('--diff <path>', 'unified diff file')
+  .option('--profile <profile>', 'profile', 'frontend')
+  .option('--profiles-dir <dir>', 'override profiles dir')
+  .option('--out-md <path>', 'transport markdown (with json block)', 'review.md')
+  .option('--out-json <path>', 'canonical json file', 'review.json')
   .action(async (opts) => {
-    await runReviewCLI(opts)
+    await runReviewCLI({
+      diff: opts.diff,
+      profile: opts.profile,
+      profilesDir: opts.profilesDir,
+      outMd: opts['outMd'] || opts.outMd,
+      outJson: opts['outJson'] || opts.outJson,
+    })
   })
 
-program.parseAsync(process.argv).catch(err => {
-  console.error(err)
-  process.exit(1)
-})
+program
+  .command('render-md')
+  .requiredOption('--in <path>', 'input review.json')
+  .option('--out <path>', 'output review.md', 'dist/review.human.md')
+  .action(async (opts) => {
+    await renderMdCLI({ inFile: opts.in, outFile: opts.out })
+  })
+
+program
+  .command('render-html')
+  .requiredOption('--in <path>', 'input review.json')
+  .option('--out <path>', 'output review.html', 'dist/review.html')
+  .action(async (opts) => {
+    await renderHtmlCLI({ inFile: opts.in, outFile: opts.out })
+  })
+
+program.parseAsync()
