@@ -1,29 +1,98 @@
-import fs from 'node:fs';
-import crypto from 'node:crypto';
-import { parse as yamlParse } from 'yaml';
-import { extractYaml } from './normalize';
-const sha1 = (s:string)=>crypto.createHash('sha1').update(s,'utf8').digest('hex');
-const normPath=(p:string)=>p.replace(/^\.?\/*/,'').replace(/\\/g,'/');
+export interface Hunk {
+  oldStart: number
+  oldLines: number
+  newStart: number
+  newLines: number
+  /** Full header line, e.g. "@@ -10,7 +12,9 @@" */
+  header: string
+  /** Added lines with their NEW file line numbers */
+  added: { line: number; text: string }[]
+}
 
-export function diffCurrentAgainstPrev(curMd: string, prevJson: string) {
-  const raw = fs.readFileSync(curMd,'utf8');
-  const yml = extractYaml(raw);
-  const doc = ((): any => {
-    try { return JSON.parse(yml); } catch { return yamlParse(yml); }
-  })();
-  const now = (doc.ai_review.findings||[]).map((f:any)=>{
-    const fp = f.fingerprint && /^[a-f0-9]{40}$/.test(f.fingerprint)
-      ? f.fingerprint : sha1(`${f.rule}|${normPath(f.file)}|${f.locator}`);
-    return { ...f, file: normPath(f.file), fingerprint: fp };
-  });
-  const prev = fs.existsSync(prevJson) ? JSON.parse(fs.readFileSync(prevJson,'utf8')) : [];
-  const prevMap: Record<string, any> = Object.fromEntries(prev.map((f:any)=>[f.fingerprint, f]));
-  const nowMap: Record<string, any> = Object.fromEntries(now.map((f:any)=>[f.fingerprint, f]));
+export interface FileDiff {
+  /** Path from the `+++ b/<path>` line */
+  filePath: string
+  hunks: Hunk[]
+}
 
-  const added = now.filter((f:any)=>!prevMap[f.fingerprint]);
-  const removed = prev.filter((f:any)=>!nowMap[f.fingerprint]);
-  const unchanged = now.filter((f:any)=>prevMap[f.fingerprint]);
+/**
+ * Parse a unified diff string into a list of files with hunks and added lines.
+ * Minimal but robust for typical git diffs.
+ */
+export function parseUnifiedDiff(diff: string): FileDiff[] {
+  const files: FileDiff[] = []
+  const lines = diff.split(/\r?\n/)
+  let current: FileDiff | null = null
+  let currentHunk: Hunk | null = null
+  let newLineCursor = 0
 
-  fs.writeFileSync('dist/ai-review-prev.json', JSON.stringify(now,null,2));
-  fs.writeFileSync('dist/ai-review-diff.json', JSON.stringify({added,removed,unchanged},null,2));
+  const hunkHeaderRe =
+    /^@@\s+-(?<oStart>\d+)(?:,(?<oLen>\d+))?\s+\+(?<nStart>\d+)(?:,(?<nLen>\d+))?\s+@@/
+
+  // We lock on +++ b/<path> to get the destination file
+  const fileHeaderRe = /^\+\+\+\s+b\/(.+)$/
+
+  for (const line of lines) {
+    // New file header?
+    const fm = fileHeaderRe.exec(line)
+    if (fm) {
+      current = { filePath: fm[1], hunks: [] }
+      files.push(current)
+      currentHunk = null
+      // cursor will be set by next hunk header
+      continue
+    }
+
+    // New hunk header?
+    const hm = hunkHeaderRe.exec(line)
+    if (hm && current) {
+      const oStart = Number(hm.groups!.oStart)
+      const oLen = Number(hm.groups!.oLen ?? '0')
+      const nStart = Number(hm.groups!.nStart)
+      const nLen = Number(hm.groups!.nLen ?? '0')
+
+      currentHunk = {
+        oldStart: oStart,
+        oldLines: oLen,
+        newStart: nStart,
+        newLines: nLen,
+        header: line,
+        added: []
+      }
+      current.hunks.push(currentHunk)
+
+      // Position cursor one line BEFORE the first new line;
+      // we'll increment as we see context/added lines.
+      newLineCursor = nStart - 1
+      continue
+    }
+
+    if (!current) continue
+
+    // Track line number progression on the NEW file side
+    if (line.startsWith('+') && !line.startsWith('+++')) {
+      // Added line contributes to new file numbering
+      newLineCursor += 1
+      if (currentHunk) {
+        currentHunk.added.push({ line: newLineCursor, text: line.slice(1) })
+      }
+      continue
+    }
+
+    if (line.startsWith(' ') || line === '') {
+      // Context line exists in both old/new → advance new side
+      newLineCursor += 1
+      continue
+    }
+
+    // Removed lines ('-') do not advance NEW cursor
+    // Any other metadata lines are ignored
+  }
+
+  return files
+}
+
+/** Canonical string locator for a hunk header */
+export function hunkLocator(h: Hunk): string {
+  return `HUNK:@@ -${h.oldStart},${h.oldLines} +${h.newStart},${h.newLines} @@`
 }

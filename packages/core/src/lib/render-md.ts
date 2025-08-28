@@ -1,54 +1,51 @@
-import fs from 'node:fs';
-import crypto from 'node:crypto';
-import { parse as yamlParse } from 'yaml';
-import { extractYaml } from './normalize';
+import type { ReviewFinding } from './normalize.js'
+import { groupBySeverity } from './normalize.js'
 
-const sha1 = (s:string)=>crypto.createHash('sha1').update(s,'utf8').digest('hex');
-const normPath = (p:string)=>p.replace(/^\.?\/*/,'').replace(/\\/g,'/');
-const trunc = (s:string, max=160)=>s.length<=max?s:s.slice(0,max-1)+'…';
+function capitalize(s: string) {
+  return s.charAt(0).toUpperCase() + s.slice(1)
+}
 
-export function renderHuman(inFile: string, outFile: string) {
-  const raw = fs.readFileSync(inFile,'utf8');
-  const yml = extractYaml(raw);
-  const doc = ((): any => {
-    try { return JSON.parse(yml); } catch { return yamlParse(yml); }
-  })();
+/**
+ * Render human-facing Markdown grouped by severity → files.
+ * Keeps wording concise and action-oriented.
+ */
+export function renderMarkdown(findings: ReviewFinding[]): string {
+  const { order, map } = groupBySeverity(findings)
+  const lines: string[] = []
 
-  const findings = doc.ai_review.findings.map((f:any)=>({
-    ...f,
-    file: normPath(f.file),
-    fingerprint: f.fingerprint && /^[a-f0-9]{40}$/.test(f.fingerprint)
-      ? f.fingerprint : sha1(`${f.rule}|${normPath(f.file)}|${f.locator}`),
-    finding: Array.isArray(f.finding)? f.finding : [String(f.finding)]
-  }));
+  lines.push('# Sentinel AI Review — frontend')
 
-  const areaOrder = ['архитектура','тестирование','доступность','DX','производительность','нейминг'];
-  findings.sort((a:any,b:any)=>
-    (a.severity==='критично'?0:1)-(b.severity==='критично'?0:1) ||
-    areaOrder.indexOf(a.area)-areaOrder.indexOf(b.area) ||
-    a.rule.localeCompare(b.rule)
-  );
+  for (const sev of order) {
+    const bucket = map.get(sev)!
+    const icon =
+      sev === 'critical' ? '🛑' :
+      sev === 'major'    ? '⚠️' :
+      sev === 'minor'    ? '💡' : '🛈'
 
-  const blocks = findings.map((f:any, i:number)=>{
-    const bullets = f.finding.map((s:string)=>`- ${s}`).join('\n');
-    const fileLoc = f.line ? `${f.file}:${f.line}` : f.file;
-    return [
-      `### ${i+1}. ${f.rule} — ${fileLoc}`,
-      `**Серьёзность:** ${f.severity}`,
-      `**Область:** ${f.area}`,
-      `**Правило:** ${f.rule} — ${f.link}`,
-      ``,
-      `**Находка:**`,
-      bullets,
-      ``,
-      f.why ? `**Почему:** ${f.why}` : '',
-      `**Предложение:** ${f.suggestion}`,
-      ``,
-      `<sub>locator: \`${trunc(f.locator)}\` • fp: \`${f.fingerprint}\`${f.symbol?` • symbol: \`${f.symbol}\``:''}</sub>`
-    ].filter(Boolean).join('\n');
-  }).join('\n\n---\n\n');
+    lines.push('', `## ${icon} ${capitalize(sev)}`)
 
-  const out = `## 🤖 Автоматический Code Review (advisory)\n\n${blocks}\n`;
-  fs.mkdirSync(require('path').dirname(outFile), { recursive: true });
-  fs.writeFileSync(outFile, out, 'utf8');
+    if (bucket.length === 0) {
+      lines.push('- ✅ No issues found')
+      continue
+    }
+
+    // Group by file path for readability
+    const byFile = new Map<string, ReviewFinding[]>()
+    for (const f of bucket) {
+      if (!byFile.has(f.file)) byFile.set(f.file, [])
+      byFile.get(f.file)!.push(f)
+    }
+
+    for (const [file, list] of byFile) {
+      for (const f of list) {
+        lines.push(`- **${f.rule}** in \`${file}\``)
+        for (const item of f.finding) lines.push(`  - ${item}`)
+        lines.push(`  - Why: ${f.why}`)
+        lines.push(`  - Fix: ${f.suggestion}`)
+      }
+    }
+  }
+
+  lines.push('', '---', 'Feedback: 👍 Relevant | 👎 Noisy (explain)')
+  return lines.join('\n')
 }

@@ -1,47 +1,64 @@
-import fs from 'node:fs';
-import { parse as yamlParse } from 'yaml';
+import crypto from 'node:crypto'
+import type { Severity } from './types.js'
 
-export type Finding = {
-  rule: string; link: string;
-  severity: 'критично'|'рекомендация';
-  area: string; file: string;
-  line?: number; symbol?: string;
-  locator: string; fingerprint?: string;
-  finding: string[] | string;
-  why?: string; suggestion: string;
-  status?: 'open'|'resolved';
-};
-
-export function extractYaml(md: string): string {
-  const fenced = md.match(/```yaml\s*([\s\S]*?)\s*```/i);
-  if (fenced) return fenced[1].trim();
-  const start = md.indexOf('ai_review:');
-  if (start === -1) throw new Error('YAML block not found');
-  const tail = md.slice(start);
-  const lines = tail.split(/\r?\n/);
-  const endMarkers = [/^```/, /^##\s/, /^#\s/, /^🤖/, /^-{3,}\s*$/];
-  let end = lines.length;
-  for (let i = 1; i < lines.length; i++) {
-    if (endMarkers.some(re => re.test(lines[i]))) { end = i; break; }
-  }
-  return lines.slice(0, end).join('\n').trim();
+export interface ReviewFinding {
+  rule: string
+  severity: Severity
+  file: string
+  /**
+   * Locator priority: HUNK:@@ ... @@ | Lnum | Lstart-Lend | symbol:Name
+   */
+  locator: string
+  /**
+   * Each item should start with a bracketed locator, e.g.:
+   * [L45-L53] message
+   * [HUNK:@@ -12,7 +12,9 @@] message
+   * [symbol:FooBar] message
+   */
+  finding: string[]
+  why: string
+  suggestion: string
+  /**
+   * Stable identifier for the finding:
+   * sha1(rule + '\n' + file + '\n' + locator + '\n' + firstFinding)
+   */
+  fingerprint: string
 }
 
-export function normalizeMachineYaml(yamlStr: string) {
-  const doc = yamlParse(yamlStr) as any;
-  if (!doc?.ai_review?.findings) throw new Error('Invalid schema: ai_review.findings missing');
-  const arr = doc.ai_review.findings as Finding[];
-  for (const f of arr) {
-    if (typeof f.finding === 'string') f.finding = [f.finding];
+export interface ReviewJson {
+  ai_review: {
+    version: 1
+    run_id: string
+    findings: ReviewFinding[]
   }
-  return { ai_review: { ...doc.ai_review, findings: arr } };
 }
 
-export function normalizeFile(inFile: string, outFile: string) {
-  const raw = fs.readFileSync(inFile, 'utf8');
-  const yml = extractYaml(raw);
-  const norm = normalizeMachineYaml(yml);
-  const out = '```yaml\n' + JSON.stringify(norm, null, 2) + '\n```\n';
-  fs.mkdirSync(require('path').dirname(outFile), { recursive: true });
-  fs.writeFileSync(outFile, out, 'utf8');
+/**
+ * Group findings by severity in canonical order.
+ */
+export function groupBySeverity(findings: ReviewFinding[]) {
+  const order: Severity[] = ['critical', 'major', 'minor', 'info']
+  const map = new Map<Severity, ReviewFinding[]>()
+  for (const s of order) map.set(s, [])
+  for (const f of findings) map.get(f.severity)!.push(f)
+  return { order, map }
+}
+
+/**
+ * SHA1 helper (used for fingerprinting).
+ */
+export function sha1(content: string): string {
+  return crypto.createHash('sha1').update(content).digest('hex')
+}
+
+/**
+ * Deterministic fingerprint for a finding.
+ */
+export function makeFingerprint(
+  rule: string,
+  file: string,
+  locator: string,
+  firstFinding: string
+): string {
+  return sha1(`${rule}\n${file}\n${locator}\n${firstFinding}`)
 }
