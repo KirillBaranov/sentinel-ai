@@ -1,0 +1,22 @@
+diff --git a/src/features/a/view/Comp.tsx b/src/features/a/view/Comp.tsx
+index 1111111..2222222 100644
+--- a/src/features/a/view/Comp.tsx
++++ b/src/features/a/view/Comp.tsx
+@@ -40,6 +40,10 @@ export function Comp() {
+   // some code
++  // TODO: refactor this block later
++  import { something } from "feature-b/internal"; // forbidden cross-feature import
++  const x = 1;
++  // end todo
+   return <div>ok</div>
+ }
+
+diff --git a/src/lib/foo.ts b/src/lib/foo.ts
+index 3333333..4444444 100644
+--- a/src/lib/foo.ts
++++ b/src/lib/foo.ts
+@@ -120,0 +121,3 @@ export function foo(a:number){
++  // TODO: add tests for new branch
++  if (a > 10) return 42;
++  return a;
+ }
