@@ -1,55 +1,53 @@
-import { FileDiff, ReviewFinding, ReviewJson, makeFingerprint } from '../../core/src/lib/normalize.js';
-import { hunkLocator } from '../../core/src/lib/diff.js';
+import type { ReviewProvider } from '@sentinel/provider-types'
+import type { ReviewJson, BoundariesConfig, RulesJson } from '@sentinel/core'
 
-export function runMockProvider(opts: {
-  runId: string;
-  profile: 'frontend';
-  rules: { id: string; severity: string }[];
-  diffs: FileDiff[];
-}): ReviewJson {
-  const findings: ReviewFinding[] = [];
-  const hasRule = (id: string) => opts.rules.some(r => r.id === id);
+// Mock provider - простая заглушка, которая возвращает 1–2 фиктивных замечания
+export const mockProvider: ReviewProvider = {
+  name: 'mock',
+  async review(input: {
+    diffText: string
+    profile: string
+    rules?: RulesJson | null
+    boundaries?: BoundariesConfig | null
+  }): Promise<ReviewJson> {
+    const findings = []
 
-  for (const fd of opts.diffs) {
-    for (const h of fd.hunks) {
-      if (hasRule('style.no-todo-comment')) {
-        const todos = h.added.filter(a => /\bTODO\b/i.test(a.text));
-        if (todos.length) {
-          const locator = hunkLocator(h);
-          const list = todos.map(t => `[L${t.line}] TODO comment detected`);
-          const fingerprint = makeFingerprint('style.no-todo-comment', fd.filePath, locator, list[0]);
-          findings.push({
-            rule: 'style.no-todo-comment',
-            severity: 'minor',
-            file: fd.filePath,
-            locator,
-            finding: list,
-            why: 'TODO comments create tech debt noise (see style handbook).',
-            suggestion: 'Replace with an issue reference; avoid TODO.',
-            fingerprint
-          });
-        }
-      }
-      if (hasRule('arch.modular-boundaries')) {
-        const cross = h.added.filter(a => /from\s+['"]feature-b\//.test(a.text) || /import\s+.*['"]feature-b\//.test(a.text));
-        if (cross.length) {
-          const locator = hunkLocator(h);
-          const list = cross.map(t => `[L${t.line}] Cross-feature import to feature-b detected`);
-          const fingerprint = makeFingerprint('arch.modular-boundaries', fd.filePath, locator, list[0]);
-          findings.push({
-            rule: 'arch.modular-boundaries',
-            severity: 'critical',
-            file: fd.filePath,
-            locator,
-            finding: list,
-            why: 'Violates module boundaries: features must not import other features directly.',
-            suggestion: 'Introduce a shared adapter in src/shared/ports.',
-            fingerprint
-          });
-        }
+    // примитивные сигналы, чтобы было видно, что провайдер «работает»
+    if (/TODO/i.test(input.diffText)) {
+      findings.push({
+        rule: 'style.no-todo-comment',
+        area: 'DX',
+        severity: 'minor',
+        file: 'unknown',
+        locator: 'L0',
+        finding: ['TODO comment found'],
+        why: 'Inline TODOs get stale and hide tech debt.',
+        suggestion: 'Replace with a link to a tracked ticket (issue/ID) and remove the inline TODO.',
+        fingerprint: 'mock-fp-todo'
+      })
+    }
+    if (/\/internal\b/.test(input.diffText)) {
+      findings.push({
+        rule: 'arch.modular-boundaries',
+        area: 'Architecture',
+        severity: 'critical',
+        file: 'unknown',
+        locator: 'L0',
+        finding: ['Cross-feature internal import'],
+        why: 'Features must not import each other directly; this couples internals.',
+        suggestion: 'Use shared adapter/port or the feature public API.',
+        fingerprint: 'mock-fp-internal'
+      })
+    }
+
+    return {
+      ai_review: {
+        version: 1,
+        run_id: `mock_${Date.now()}`,
+        findings
       }
     }
   }
-
-  return { ai_review: { version: 1, run_id: opts.runId, findings } };
 }
+
+export default mockProvider

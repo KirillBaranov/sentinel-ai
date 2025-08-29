@@ -30,6 +30,8 @@
   },
   "dependencies": {
     "@sentinel/core": "workspace:*",
+    "@sentinel/provider-mock": "workspace:*",
+    "@sentinel/provider-types": "workspace:*",
     "commander": "^12.1.0"
   },
   "devDependencies": {

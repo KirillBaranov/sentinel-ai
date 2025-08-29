@@ -24,6 +24,7 @@ program
   .requiredOption('--diff <path>', 'unified diff file')
   .option('--profile <profile>', 'profile', 'frontend')
   .option('--profiles-dir <dir>', 'override profiles dir')
+  .option('--provider <name>', 'provider: local|mock', 'local')
   .option('--out-md <path>', 'transport markdown (with json block)', 'review.md')
   .option('--out-json <path>', 'canonical json file', 'review.json')
   .action(async (opts) => {
@@ -31,6 +32,7 @@ program
       diff: opts.diff,
       profile: opts.profile,
       profilesDir: opts.profilesDir,
+      provider: opts.provider,
       outMd: opts['outMd'] || opts.outMd,
       outJson: opts['outJson'] || opts.outJson,
     })

@@ -1,3 +1,5 @@
+import type { ReviewFinding } from './normalize.js'
+
 export interface Hunk {
   oldStart: number
   oldLines: number
@@ -35,7 +37,7 @@ export function parseUnifiedDiff(diff: string): FileDiff[] {
   for (const line of lines) {
     // New file header?
     const fm = fileHeaderRe.exec(line)
-    if (fm) {
+    if (fm && fm[1]) {
       current = { filePath: fm[1], hunks: [] }
       files.push(current)
       currentHunk = null
@@ -96,3 +98,5 @@ export function parseUnifiedDiff(diff: string): FileDiff[] {
 export function hunkLocator(h: Hunk): string {
   return `HUNK:@@ -${h.oldStart},${h.oldLines} +${h.newStart},${h.newLines} @@`
 }
+
+export type { ReviewFinding }
