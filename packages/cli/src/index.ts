@@ -1,8 +1,9 @@
 import { Command } from 'commander'
 import { buildContextCLI } from './context.js'
 import { runReviewCLI } from './review.js'
-import { renderMdCLI } from './cmd/render-md.js'
 import { renderHtmlCLI } from './cmd/render-html.js'
+import { type RenderOptions, type SeverityMap, type ReviewJson, renderMarkdown } from '@sentinel/core'
+import fs from 'node:fs'
 
 const program = new Command()
 
@@ -38,13 +39,31 @@ program
     })
   })
 
-program
+  program
   .command('render-md')
   .requiredOption('--in <path>', 'input review.json')
-  .option('--out <path>', 'output review.md', 'dist/review.human.md')
-  .action(async (opts) => {
-    await renderMdCLI({ inFile: opts.in, outFile: opts.out })
-  })
+  .requiredOption('--out <path>', 'output review.md')
+  .option('--template <path>', 'path to custom .hbs-like template')
+  .option('--severity-map <path>', 'path to severity map json')
+  .action((opts) => {
+    const raw = JSON.parse(fs.readFileSync(opts.in, 'utf8')) as ReviewJson;
+    const findings = raw.ai_review?.findings ?? [];
+
+    const ropts: RenderOptions = {};
+    if (opts.template && fs.existsSync(opts.template)) {
+      ropts.template = fs.readFileSync(opts.template, 'utf8');
+    }
+    if (opts['severityMap'] && fs.existsSync(opts['severityMap'])) {
+      ropts.severityMap = JSON.parse(fs.readFileSync(opts['severityMap'],'utf8')) as SeverityMap;
+    }
+
+    const md = renderMarkdown(findings, ropts);
+    fs.mkdirSync(require('node:path').dirname(opts.out), { recursive: true });
+    fs.writeFileSync(opts.out, md);
+    console.log(`[render-md] wrote ${opts.out}`);
+  });
+
+program.parseAsync();
 
 program
   .command('render-html')
