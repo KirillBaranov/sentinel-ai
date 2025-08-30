@@ -1,12 +1,14 @@
+// packages/cli/src/index.ts
 import fs from 'node:fs'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { Command } from 'commander'
 import { bold, cyan, dim, green, red, yellow } from 'colorette'
 
 import { buildContextCLI } from './context.js'
 import { runReviewCLI } from './review.js'
 import { renderHtmlCLI } from './cmd/render-html.js'
+import { initProfileCLI } from './cmd/init-profile.js'
+
 import {
   type RenderOptions,
   type SeverityMap,
@@ -14,22 +16,15 @@ import {
   renderMarkdown,
 } from '@sentinel/core'
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url))
+import {
+  // единые DX-утилиты
+  findRepoRoot,
+  ok, info, warn, fail,
+} from './cli-utils.js'
 
 // ────────────────────────────────────────────────────────────────────────────────
-// Repo root detection (walk up until package.json/.git or filesystem root)
+// Repo root (из общих утилит: .git | pnpm-workspace.yaml | top-level package.json)
 // ────────────────────────────────────────────────────────────────────────────────
-function findRepoRoot(start = process.cwd()): string {
-  let dir = path.resolve(start)
-  while (true) {
-    const hasPkg = fs.existsSync(path.join(dir, 'package.json'))
-    const hasGit = fs.existsSync(path.join(dir, '.git'))
-    if (hasPkg || hasGit) return dir
-    const parent = path.dirname(dir)
-    if (parent === dir) return start
-    dir = parent
-  }
-}
 const REPO_ROOT = findRepoRoot()
 
 // ────────────────────────────────────────────────────────────────────────────────
@@ -42,9 +37,10 @@ type Rc = Partial<{
   provider: string
   outMd: string
   outJson: string
-  failOn: 'major' | 'critical'
+  failOn: 'none' | 'major' | 'critical'
   maxComments: number
   diff: string
+  debug: boolean
 }>
 
 function readJsonSafe(p: string): any | null {
@@ -52,7 +48,6 @@ function readJsonSafe(p: string): any | null {
 }
 
 function loadRc(): Rc {
-  // 1) local RC at repo root / cwd
   const candidates = [
     path.join(REPO_ROOT, '.sentinelrc.json'),
     path.join(process.cwd(), '.sentinelrc.json'),
@@ -67,7 +62,6 @@ function loadRc(): Rc {
     }
   }
 
-  // 2) ENV overlay
   const env: Rc = {
     profile: process.env.SENTINEL_PROFILE ?? rc.profile,
     profilesDir: process.env.SENTINEL_PROFILES_DIR ?? rc.profilesDir,
@@ -79,8 +73,8 @@ function loadRc(): Rc {
       ? Number(process.env.SENTINEL_MAX_COMMENTS)
       : rc.maxComments,
     diff: process.env.SENTINEL_DIFF ?? rc.diff,
+    debug: process.env.SENTINEL_DEBUG ? process.env.SENTINEL_DEBUG === '1' : rc.debug,
   }
-
   return env
 }
 
@@ -89,13 +83,8 @@ function pick<T>(cliVal: T | undefined, envVal: T | undefined, fallback: T): T {
 }
 
 // ────────────────────────────────────────────────────────────────────────────────
-// Pretty helpers
+// Pretty helpers (локальные обёртки остались — используют colorette)
 // ────────────────────────────────────────────────────────────────────────────────
-function ok(msg: string) { console.log(green('✔ ') + msg) }
-function info(msg: string) { console.log(cyan('ℹ ') + msg) }
-function warn(msg: string) { console.warn(yellow('▲ ') + msg) }
-function fail(msg: string) { console.error(red('✖ ') + msg) }
-
 function hintProfileResolution(profile: string, profilesDir?: string) {
   const candidates = [
     '`profiles/<name>`',
@@ -114,6 +103,9 @@ const program = new Command()
   .description(`${bold('Sentinel AI CLI')} — code review with profiles & providers`)
   .version('0.1.0')
 
+program.showHelpAfterError()
+program.showSuggestionAfterError()
+
 const rc = loadRc()
 
 // build-context
@@ -128,7 +120,9 @@ program
       await buildContextCLI({
         profile: pick(opts.profile, rc.profile, 'frontend'),
         profilesDir: opts.profilesDir ?? rc.profilesDir,
-        out: opts.out,
+        out: opts.out
+          ? (path.isAbsolute(opts.out) ? opts.out : path.join(REPO_ROOT, opts.out))
+          : undefined,
       } as any)
       ok(`Context built. See ${dim(path.join(REPO_ROOT, 'dist/ai-review-context.md'))}`)
     } catch (e: any) {
@@ -152,8 +146,9 @@ program
   .option('--provider <name>', 'provider: local|mock|openai', rc.provider ?? 'local')
   .option('--out-md <path>', 'transport Markdown (.md) with fenced JSON', rc.outMd ?? 'review.md')
   .option('--out-json <path>', 'canonical review JSON', rc.outJson ?? 'review.json')
-  .option('--fail-on <level>', 'exit non-zero if max severity ≥ major|critical', rc.failOn)
+  .option('--fail-on <level>', 'none|major|critical (exit policy)', rc.failOn)
   .option('--max-comments <n>', 'cap number of findings', rc.maxComments)
+  .option('--debug', 'verbose debug logs', rc.debug ?? false)
   .action(async (opts) => {
     const diff = pick<string | undefined>(opts.diff, rc.diff, undefined as any)
     if (!diff) {
@@ -163,14 +158,21 @@ program
     }
     try {
       await runReviewCLI({
-        diff,
+        diff: path.isAbsolute(diff) ? diff : path.join(REPO_ROOT, diff),
         profile: pick(opts.profile, rc.profile, 'frontend'),
         profilesDir: opts.profilesDir ?? rc.profilesDir,
         provider: pick(opts.provider, rc.provider, 'local'),
-        outMd: pick(opts.outMd, rc.outMd, 'review.md'),
-        outJson: pick(opts.outJson, rc.outJson, 'review.json'),
+        outMd: (() => {
+          const v = pick(opts.outMd, rc.outMd, 'review.md')
+          return path.isAbsolute(v) ? v : path.join(REPO_ROOT, v)
+        })(),
+        outJson: (() => {
+          const v = pick(opts.outJson, rc.outJson, 'review.json')
+          return path.isAbsolute(v) ? v : path.join(REPO_ROOT, v)
+        })(),
         failOn: opts.failOn ?? rc.failOn,
         maxComments: opts.maxComments ?? rc.maxComments,
+        debug: !!opts.debug,
       })
       ok('Review finished.')
     } catch (e: any) {
@@ -194,25 +196,48 @@ program
   .option('--severity-map <path>', 'JSON remap of severity labels')
   .action((opts) => {
     try {
-      const raw = JSON.parse(fs.readFileSync(opts.in, 'utf8')) as ReviewJson
+      const inPath  = path.isAbsolute(opts.in)  ? opts.in  : path.join(REPO_ROOT, opts.in)
+      const outPath = path.isAbsolute(opts.out) ? opts.out : path.join(REPO_ROOT, opts.out)
+
+      const raw = JSON.parse(fs.readFileSync(inPath, 'utf8')) as ReviewJson
       const findings = raw.ai_review?.findings ?? []
 
       const ropts: RenderOptions = {}
-      if (opts.template && fs.existsSync(opts.template)) {
-        ropts.template = fs.readFileSync(opts.template, 'utf8')
+      if (opts.template) {
+        const tpl = path.isAbsolute(opts.template) ? opts.template : path.join(REPO_ROOT, opts.template)
+        if (fs.existsSync(tpl)) ropts.template = fs.readFileSync(tpl, 'utf8')
       }
-      if (opts['severityMap'] && fs.existsSync(opts['severityMap'])) {
-        ropts.severityMap = JSON.parse(fs.readFileSync(opts['severityMap'], 'utf8')) as SeverityMap
+      const sevPath = (opts as any)['severityMap'] || opts['severity-map']
+      if (sevPath) {
+        const sp = path.isAbsolute(sevPath) ? sevPath : path.join(REPO_ROOT, sevPath)
+        if (fs.existsSync(sp)) ropts.severityMap = JSON.parse(fs.readFileSync(sp, 'utf8')) as SeverityMap
       }
 
       const md = renderMarkdown(findings, ropts)
-      fs.mkdirSync(path.dirname(opts.out), { recursive: true })
-      fs.writeFileSync(opts.out, md)
-      ok(`Markdown written → ${dim(opts.out)}`)
+      fs.mkdirSync(path.dirname(outPath), { recursive: true })
+      fs.writeFileSync(outPath, md)
+      ok(`Markdown written → ${dim(outPath)}`)
     } catch (e: any) {
       fail(String(e?.stack || e))
       process.exit(1)
     }
+  })
+
+// init-profile
+program
+  .command('init-profile')
+  .description('Scaffold a new review profile (handbook + rules + boundaries [+ ADR])')
+  .requiredOption('--name <name>', 'profile name (e.g. frontend)')
+  .option('--out-dir <dir>', 'profiles root (default: packages/profiles)')
+  .option('--force', 'overwrite existing files', false)
+  .option('--with-adr', 'create docs/adr starter file', false)
+  .action(async (opts) => {
+    await initProfileCLI({
+      name: opts.name,
+      outDir: opts.outDir,
+      force: !!opts.force,
+      withAdr: !!opts.withAdr,
+    })
   })
 
 // render-html
@@ -223,8 +248,11 @@ program
   .option('--out <path>', 'output review.html', 'dist/review.html')
   .action(async (opts) => {
     try {
-      await renderHtmlCLI({ inFile: opts.in, outFile: opts.out })
-      ok(`HTML written → ${dim(opts.out)}`)
+      const inPath  = path.isAbsolute(opts.in)  ? opts.in  : path.join(REPO_ROOT, opts.in)
+      const outPath = path.isAbsolute(opts.out) ? opts.out : path.join(REPO_ROOT, opts.out)
+
+      await renderHtmlCLI({ inFile: inPath, outFile: outPath })
+      ok(`HTML written → ${dim(outPath)}`)
     } catch (e: any) {
       fail(String(e?.stack || e))
       process.exit(1)
@@ -234,7 +262,7 @@ program
 // Global help footer
 program.addHelpText('afterAll', `
 ${dim('Config sources (priority high→low):')} CLI ${bold('>')} ENV ${bold('>')} .sentinelrc.json ${bold('>')} defaults
-ENV vars: SENTINEL_PROFILE, SENTINEL_PROFILES_DIR, SENTINEL_PROVIDER, SENTINEL_OUT_MD, SENTINEL_OUT_JSON, SENTINEL_FAIL_ON, SENTINEL_MAX_COMMENTS, SENTINEL_DIFF
+ENV vars: SENTINEL_PROFILE, SENTINEL_PROFILES_DIR, SENTINEL_PROVIDER, SENTINEL_OUT_MD, SENTINEL_OUT_JSON, SENTINEL_FAIL_ON, SENTINEL_MAX_COMMENTS, SENTINEL_DIFF, SENTINEL_DEBUG
 Repo root: ${dim(REPO_ROOT)}
 `)
 

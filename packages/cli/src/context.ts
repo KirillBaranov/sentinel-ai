@@ -1,7 +1,13 @@
+// packages/cli/src/context.ts
 import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
-import { fileURLToPath } from 'node:url'
+
+import {
+  ensureDirForFile,
+  printContextSummary,
+  findRepoRoot, // ← общий поиск корня (.git / pnpm-workspace.yaml / top package.json)
+} from './cli-utils.js'
 
 /**
  * Build AI context (Markdown) from profile docs:
@@ -10,26 +16,25 @@ import { fileURLToPath } from 'node:url'
  * - adr/* (optional)
  *
  * Output:
- *   dist/ai-review-context.md  (в корне репозитория)
+ *   dist/ai-review-context.md  (repo root)
  */
 
 export interface BuildContextOptions {
   profile: string                        // e.g. 'frontend'
-  repoRoot?: string                      // default: <REPO_ROOT> (из пути файла)
+  repoRoot?: string                      // default: <REPO_ROOT> (from repo discovery)
   profilesDir?: string                   // default: auto-discover (profiles | packages/profiles)
-  outFile?: string                       // default: dist/ai-review-context.md (в корне)
+  outFile?: string                       // default: dist/ai-review-context.md
   includeADR?: boolean                   // default: true
   includeBoundaries?: boolean            // default: true
   prettyJson?: number | undefined        // default: 2
   maxBytes?: number                      // hard limit ~1.5MB
-  maxApproxTokens?: number | undefined   // soft limit; если задан, сначала режем ADR
+  maxApproxTokens?: number | undefined   // soft limit; if set, ADR is trimmed first
 }
 
 type FileBlob = { path: string; content: string; bytes: number }
 
-// ── вычисляем корень репо относительно packages/cli/src/context.ts
-const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const REPO_ROOT = path.resolve(__dirname, '../../../')
+// unified repo root
+const REPO_ROOT = findRepoRoot()
 
 /** Normalize newlines, strip BOM, trim trailing spaces per line */
 function normalizeText(s: string): string {
@@ -44,14 +49,10 @@ function sha1(buf: string | Buffer) {
 }
 
 function safeRead(filePath: string): string | null {
-  try {
-    return fs.readFileSync(filePath, 'utf8')
-  } catch {
-    return null
-  }
+  try { return fs.readFileSync(filePath, 'utf8') } catch { return null }
 }
 
-/** Approximate token count (очень грубо) */
+/** Approximate token count (very rough) */
 function approxTokens(s: string): number {
   return s.split(/\s+/g).filter(Boolean).length
 }
@@ -83,11 +84,7 @@ function readBlobs(files: string[]): FileBlob[] {
   return out
 }
 
-function ensureDirForFile(p: string) {
-  fs.mkdirSync(path.dirname(p), { recursive: true })
-}
-
-/** Build a deterministic table of contents for a set of markdown files */
+/** Deterministic TOC for a set of markdown files */
 function buildTOC(blobs: FileBlob[], baseLabel: string): string {
   if (blobs.length === 0) return ''
   const rel = (p: string) => p.replace(/^.*?profiles\//, 'profiles/')
@@ -96,26 +93,20 @@ function buildTOC(blobs: FileBlob[], baseLabel: string): string {
 }
 
 function resolveProfilesDir(repoRoot: string, explicit?: string): string {
-  // 1) явный приоритет: аргумент или ENV
+  // 1) explicit (arg or ENV)
   const envDir = process.env.SENTINEL_PROFILES_DIR
-  const candidateExplicit = explicit ?? envDir
-  if (candidateExplicit) {
-    const abs = path.isAbsolute(candidateExplicit)
-      ? candidateExplicit
-      : path.join(repoRoot, candidateExplicit)
+  const wanted = explicit ?? envDir
+  if (wanted) {
+    const abs = path.isAbsolute(wanted) ? wanted : path.join(repoRoot, wanted)
     if (fs.existsSync(abs)) return abs
     throw new Error(`profiles dir not found (explicit): ${abs}`)
   }
-
-  // 2) авто-поиск по распространённым локациям
+  // 2) common locations
   const candidates = [
     path.join(repoRoot, 'profiles'),
-    path.join(repoRoot, 'packages', 'profiles')
+    path.join(repoRoot, 'packages', 'profiles'),
   ]
-  for (const c of candidates) {
-    if (fs.existsSync(c)) return c
-  }
-
+  for (const c of candidates) if (fs.existsSync(c)) return c
   throw new Error(
     `profiles dir not found. Tried:\n` +
     candidates.map(c => ` - ${c}`).join('\n') +
@@ -127,7 +118,7 @@ export function buildContext(opts: BuildContextOptions) {
   const {
     profile,
     repoRoot = REPO_ROOT,
-    profilesDir, // может быть относительным или абсолютным
+    profilesDir,
     outFile = path.join(repoRoot, 'dist', 'ai-review-context.md'),
     includeADR = true,
     includeBoundaries = true,
@@ -152,28 +143,20 @@ export function buildContext(opts: BuildContextOptions) {
   const rulesRaw = safeRead(rulesPath)
   if (!rulesRaw) throw new Error(`rules.json not found: ${rulesPath}`)
   let rulesPretty = ''
-  try {
-    rulesPretty = JSON.stringify(JSON.parse(rulesRaw), null, prettyJson)
-  } catch {
-    rulesPretty = rulesRaw
-  }
+  try { rulesPretty = JSON.stringify(JSON.parse(rulesRaw), null, prettyJson) } catch { rulesPretty = rulesRaw }
 
   // 3) Boundaries (optional)
   let boundariesPretty = ''
   if (includeBoundaries) {
     const boundariesRaw = safeRead(boundariesPath)
     if (boundariesRaw) {
-      try {
-        boundariesPretty = JSON.stringify(JSON.parse(boundariesRaw), null, prettyJson)
-      } catch {
-        boundariesPretty = boundariesRaw
-      }
+      try { boundariesPretty = JSON.stringify(JSON.parse(boundariesRaw), null, prettyJson) } catch { boundariesPretty = boundariesRaw }
     }
   }
 
   // 4) ADR (optional)
   const adrFiles = includeADR ? listADR(adrDir) : []
-  let adrBlobs = includeADR ? readBlobs(adrFiles) : []
+  const adrBlobs = includeADR ? readBlobs(adrFiles) : []
 
   // Metadata
   const ts = new Date().toISOString()
@@ -190,7 +173,6 @@ export function buildContext(opts: BuildContextOptions) {
 
   // Sections
   const parts: string[] = []
-
   parts.push('---')
   parts.push('title: Sentinel AI Review Context')
   parts.push(`profile: ${profile}`)
@@ -308,61 +290,46 @@ export function buildContext(opts: BuildContextOptions) {
     bytes: Buffer.byteLength(output, 'utf8'),
     approxTokens: approxTokens(output),
     baseHash,
-    finalHash
+    finalHash,
+    counts: {
+      handbook: hbBlobs.length,
+      adr: adrBlobs.length,
+      hasBoundaries: Boolean(boundariesPretty),
+    }
   }
 }
 
-/** CLI wrapper */
-export async function buildContextCLI() {
-  const profile = readArg('--profile', 'frontend')
-  const outFile = readArg('--out', undefined)
-  const repoRoot = readArg('--repo-root', REPO_ROOT)
-  const profilesDir = readArg('--profiles-dir', undefined) // можно передать относительный
-  const includeADR = readBool('--include-adr', true)
-  const includeBoundaries = readBool('--include-boundaries', true)
-  const maxBytes = readInt('--max-bytes', 1_500_000)
-  const maxApproxTokens = readInt('--max-tokens', undefined)
-
+/** CLI-friendly wrapper used by commander */
+export async function buildContextCLI(opts: {
+  profile: string
+  profilesDir?: string
+  out?: string
+  includeADR?: boolean
+  includeBoundaries?: boolean
+  maxBytes?: number
+  maxApproxTokens?: number
+}) {
   const res = buildContext({
-    profile,
-    outFile,
-    repoRoot,
-    profilesDir,
-    includeADR,
-    includeBoundaries,
-    maxBytes,
-    maxApproxTokens
+    profile: opts.profile,
+    profilesDir: opts.profilesDir,
+    outFile: opts.out, // may be undefined → default
+    includeADR: opts.includeADR ?? true,
+    includeBoundaries: opts.includeBoundaries ?? true,
+    maxBytes: opts.maxBytes ?? 1_500_000,
+    maxApproxTokens: opts.maxApproxTokens,
   })
-  console.log(
-    `[context] wrote ${path.relative(String(repoRoot), res.outFile)} ` +
-    `(${res.bytes} bytes, ~${res.approxTokens} tokens)`
-  )
-  console.log(`[context] hash: ${res.finalHash}`)
-}
 
-/** tiny argv helpers */
-function readArg(flag: string, fallback?: string) {
-  const i = process.argv.indexOf(flag)
-  if (i >= 0 && process.argv[i + 1]) return process.argv[i + 1]
-  return fallback
-}
-function readBool(flag: string, fallback: boolean) {
-  const name = flag.replace(/^--/, '')
-  if (process.argv.includes(flag)) return true
-  if (process.argv.includes(`--no-${name}`)) return false
-  return fallback
-}
-function readInt(flag: string, fallback?: number) {
-  const v = readArg(flag)
-  if (v == null) return fallback
-  const n = Number(v)
-  return Number.isFinite(n) ? n : fallback
-}
-
-// Allow direct execution via node/tsx
-if (import.meta.url === `file://${process.argv[1]}`) {
-  buildContextCLI().catch(err => {
-    console.error(err)
-    process.exit(1)
+  // unified pretty summary
+  printContextSummary({
+    repoRoot: REPO_ROOT,
+    profile: opts.profile,
+    profilesRootLabel: opts.profilesDir ?? process.env.SENTINEL_PROFILES_DIR ?? '(auto)',
+    outFile: res.outFile,
+    handbookCount: res.counts.handbook,
+    adrCount: res.counts.adr,
+    hasBoundaries: res.counts.hasBoundaries,
+    bytes: res.bytes,
+    tokens: res.approxTokens,
+    checksum: res.finalHash,
   })
 }
