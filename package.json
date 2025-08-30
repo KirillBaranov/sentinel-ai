@@ -32,36 +32,27 @@
     "build": "pnpm -r run build",
     "dev": "pnpm -r --parallel --filter @sentinel/core --filter @sentinel/provider-* run dev",
     "demo": "pnpm --filter @sentinel/demo dev",
-
-    "test": "pnpm -r run test",
-    "test:watch": "pnpm -r run test:watch",
-    "test:coverage": "pnpm -r run test:coverage",
-
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
     "lint": "pnpm -r run lint",
     "lint:fix": "pnpm -r run lint:fix",
     "format": "prettier -w .",
     "format:check": "prettier --check .",
     "type-check": "tsc -b tsconfig.tools.json",
     "ci:check": "pnpm lint && pnpm type-check && pnpm test -- --run",
-
     "clean": "pnpm -r run clean",
     "clean:all": "rm -rf node_modules && rm -rf packages/*/node_modules && rm -rf apps/*/node_modules",
-
     "sentinel:profile:init": "pnpm --filter @sentinel/cli exec tsx src/index.ts init-profile",
     "sentinel:rules:validate": "pnpm --filter @sentinel/core exec tsx src/scripts/validate-rules.ts --profile frontend --profiles-dir packages/profiles",
-
     "sentinel:context": "pnpm --filter @sentinel/cli exec tsx src/index.ts build-context --profile frontend",
     "sentinel:context:prod": "pnpm -r build && pnpm --filter @sentinel/cli exec node dist/index.js build-context --profile frontend",
-
     "sentinel:review:local": "pnpm --filter @sentinel/cli exec tsx src/index.ts review --provider local --diff fixtures/changes.diff --profile frontend --profiles-dir packages/profiles --out-md review.md --out-json review.json",
     "sentinel:review:local:nofail": "pnpm --filter @sentinel/cli exec tsx src/index.ts review --provider local --diff fixtures/changes.diff --profile frontend --profiles-dir packages/profiles --out-md review.md --out-json review.json --fail-on none",
     "sentinel:review:local:debug": "pnpm --filter @sentinel/cli exec tsx src/index.ts review --provider local --diff fixtures/changes.diff --profile frontend --profiles-dir packages/profiles --out-md review.md --out-json review.json --debug",
-
     "sentinel:review:mock": "pnpm --filter @sentinel/cli exec tsx src/index.ts review --provider mock --diff fixtures/changes.diff --profile frontend --profiles-dir packages/profiles --out-md review.md --out-json review.json",
     "sentinel:review:mock:nofail": "pnpm --filter @sentinel/cli exec tsx src/index.ts review --provider mock --diff fixtures/changes.diff --profile frontend --profiles-dir packages/profiles --out-md review.md --out-json review.json --fail-on none",
-
     "sentinel:review:prod": "pnpm -r build && pnpm --filter @sentinel/cli exec node dist/index.js review --provider mock --diff fixtures/changes.diff --profile frontend --profiles-dir packages/profiles --out-md review.md --out-json review.json",
-
     "sentinel:render-md": "pnpm --filter @sentinel/cli exec tsx src/index.ts render-md --in dist/review.json --out dist/review.human.md",
     "sentinel:render-html": "pnpm --filter @sentinel/cli exec tsx src/index.ts render-html --in dist/review.json --out dist/review.html"
   },
@@ -77,6 +68,7 @@
     "@types/node": "^20.14.10",
     "@typescript-eslint/eslint-plugin": "^8.8.0",
     "@typescript-eslint/parser": "^8.8.0",
+    "@vitest/coverage-v8": "2.1.9",
     "colorette": "^2.0.20",
     "eslint": "^9.16.0",
     "eslint-config-prettier": "^9.1.0",
