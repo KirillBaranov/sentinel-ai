@@ -1,0 +1,39 @@
+{
+  "profilesDir": "packages/profiles",
+  "defaultProfile": "frontend",
+  "profiles": {
+    "frontend": {
+      "rules": "docs/rules/rules.json",
+      "boundaries": "docs/rules/boundaries.json",
+      "handbook": [
+        "docs/handbook/architecture.md",
+        "docs/handbook/style.md",
+        "docs/handbook/testing.md"
+      ],
+      "provider": "local",
+      "failOn": "major",
+      "maxComments": 50
+    },
+    "backend": {
+      "rules": "docs/rules/rules.json",
+      "boundaries": "docs/rules/boundaries.json",
+      "handbook": [
+        "docs/handbook/architecture.md",
+        "docs/handbook/testing.md"
+      ],
+      "provider": "mock",
+      "failOn": "critical",
+      "maxComments": 30
+    },
+    "e2e": {
+      "rules": "docs/rules/rules.json",
+      "handbook": ["docs/handbook/testing.md"],
+      "provider": "local",
+      "failOn": "major"
+    }
+  },
+  "sets": {
+    "ci-all": ["frontend", "backend", "e2e"],
+    "fast": ["frontend"]
+  }
+}
