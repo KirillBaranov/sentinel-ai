@@ -1,15 +1,17 @@
-import type { ReviewJson } from '@sentinel/core'
+import type { ReviewJson, BoundariesConfig } from '@sentinel/core'
 import type { ReviewProvider, ProviderReviewInput } from '@sentinel/provider-types'
-import { analyzeDiff } from './engine.js'
+import { analyzeDiff } from '@sentinel/core'
+
+export { analyzeDiff }
 
 export const localProvider: ReviewProvider = {
   name: 'local',
   async review(input: ProviderReviewInput): Promise<ReviewJson> {
     const findings = analyzeDiff({
       diffText: input.diffText,
-      rulesById: undefined,           // провайдер может сам подмешать знания, если нужно
+      rulesById: undefined,
       rulesJson: input.rules ?? null,
-      boundaries: input.boundaries ?? null,
+      boundaries: (input.boundaries as BoundariesConfig) ?? null,
     })
 
     return {
