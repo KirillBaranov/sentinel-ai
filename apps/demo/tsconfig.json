@@ -4,7 +4,7 @@
     "noEmit": true,
     "baseUrl": ".",
     "paths": {
-      "@sentinel/core": ["../../packages/core/src/index.ts"]
+      "@sentinel/core": ["workspace:*"],
     }
   },
   "include": ["src", "vite.config.ts"]

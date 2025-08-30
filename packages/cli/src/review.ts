@@ -1,33 +1,40 @@
+// packages/cli/src/review.ts
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import type { ReviewJson, RulesJson, RuleItem, BoundariesConfig } from '@sentinel/core'
-import { analyzeDiff } from '@sentinel/core'
+import type { ReviewJson, BoundariesConfig, Severity, RulesJson, RuleItem } from '@sentinel/core'
 
 import type { ReviewProvider } from '@sentinel/provider-types'
 import { mockProvider } from '@sentinel/provider-mock'
+import { localProvider } from '@sentinel/provider-local'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT = path.resolve(__dirname, '../../../')
 
+// ────────────────────────────────────────────────────────────────────────────────
+// helpers
+// ────────────────────────────────────────────────────────────────────────────────
 function ensureDirForFile(p: string) {
   fs.mkdirSync(path.dirname(p), { recursive: true })
 }
 
 function resolveProfileRoot(repoRoot: string, profile: string, profilesDir?: string): string {
+  // путь указан явно
   if (profile.includes('/') || profile.startsWith('.') || path.isAbsolute(profile)) {
     const abs = path.isAbsolute(profile) ? profile : path.join(repoRoot, profile)
     if (!fs.existsSync(abs)) throw new Error(`[profile] path not found: ${abs}`)
     return abs
   }
 
+  // общий каталог профилей
   if (profilesDir) {
     const base = path.isAbsolute(profilesDir) ? profilesDir : path.join(repoRoot, profilesDir)
     const candidate = path.join(base, profile)
     if (fs.existsSync(candidate)) return candidate
   }
 
+  // стандартные места
   const candidates = [
     path.join(repoRoot, 'profiles', profile),
     path.join(repoRoot, 'packages', 'profiles', profile),
@@ -37,20 +44,14 @@ function resolveProfileRoot(repoRoot: string, profile: string, profilesDir?: str
   throw new Error(`[profile] not found: "${profile}" (tried: ${candidates.join(', ')})`)
 }
 
-// ────────────────────────────────────────────────────────────────────────────────
-// Rules/boundaries loaders
-// ────────────────────────────────────────────────────────────────────────────────
-function loadRules(profile: string, profilesDir?: string): { byId: Map<string, RuleItem>, raw: RulesJson | null } {
+function loadRules(profile: string, profilesDir?: string): RulesJson | null {
   const PROFILE_ROOT = resolveProfileRoot(REPO_ROOT, profile, profilesDir)
   const rulesPath = path.join(PROFILE_ROOT, 'docs', 'rules', 'rules.json')
   try {
-    const raw = JSON.parse(fs.readFileSync(rulesPath, 'utf8')) as RulesJson
-    const byId = new Map<string, RuleItem>()
-    for (const r of raw.rules) byId.set(r.id, r)
-    return { byId, raw }
+    return JSON.parse(fs.readFileSync(rulesPath, 'utf8')) as RulesJson
   } catch {
     console.warn(`[review] rules.json not found or invalid for profile=${profile}. Looked at: ${rulesPath}`)
-    return { byId: new Map(), raw: null }
+    return null
   }
 }
 
@@ -65,13 +66,21 @@ function loadBoundaries(profile: string, profilesDir?: string): BoundariesConfig
   }
 }
 
-// ────────────────────────────────────────────────────────────────────────────────
-// Provider picker (без fallback, единая схема dev/prod)
-// ────────────────────────────────────────────────────────────────────────────────
-function pickProvider(name?: string): ReviewProvider | 'local' {
-  const id = (name || process.env.SENTINEL_PROVIDER || 'local').toLowerCase()
-  if (id === 'mock') return mockProvider
-  return 'local'
+function pickProvider(id?: string): ReviewProvider {
+  const name = (id || process.env.SENTINEL_PROVIDER || 'local').toLowerCase()
+  if (name === 'mock') return mockProvider
+  // дефолт — локальный провайдер (детерминированный)
+  return localProvider
+}
+
+// severity helpers
+const sevRank: Record<Severity, number> = { critical: 3, major: 2, minor: 1, info: 0 }
+function maxSeverity(findings: { severity: Severity }[]): Severity | null {
+  let max: Severity | null = null
+  for (const f of findings) {
+    if (!max || sevRank[f.severity] > sevRank[max]) max = f.severity
+  }
+  return max
 }
 
 // ────────────────────────────────────────────────────────────────────────────────
@@ -83,7 +92,9 @@ export async function runReviewCLI(opts: {
   outMd: string        // transport markdown with JSON block
   outJson?: string     // canonical json (dist/review.json by default)
   profilesDir?: string
-  provider?: string    // 'mock' | 'local'
+  provider?: string    // 'mock' | 'local' | future adapters
+  failOn?: 'major' | 'critical'
+  maxComments?: number
 }) {
   const provider = pickProvider(opts.provider)
 
@@ -98,26 +109,25 @@ export async function runReviewCLI(opts: {
   const diffPath = path.resolve(opts.diff)
   const diffText = fs.readFileSync(diffPath, 'utf8')
 
-  const { byId: rulesById, raw: rulesRaw } = loadRules(opts.profile, opts.profilesDir)
+  const rulesRaw = loadRules(opts.profile, opts.profilesDir)
   const boundaries = loadBoundaries(opts.profile, opts.profilesDir)
 
-  let review: ReviewJson
+  // единый путь: всегда через провайдера
+  const review: ReviewJson = await provider.review({
+    diffText,
+    profile: opts.profile,
+    rules: rulesRaw,
+    boundaries
+  })
 
-  if (provider === 'local') {
-    const findings = analyzeDiff({
-      diffText,
-      rulesById,
-      rulesJson: rulesRaw,
-      boundaries
-    })
-    review = { ai_review: { version: 1, run_id: `run_${Date.now()}`, findings } }
-  } else {
-    review = await provider.review({
-      diffText,
-      profile: opts.profile,
-      rules: rulesRaw,
-      boundaries
-    })
+  // cap findings if requested
+  const envCapRaw = process.env.SENTINEL_MAX_COMMENTS
+  const envCap = envCapRaw != null ? Number(envCapRaw) : undefined
+  const cap = Number.isFinite(opts.maxComments as number) ? opts.maxComments
+            : Number.isFinite(envCap as number) ? envCap
+            : undefined
+  if (cap && cap > 0 && review.ai_review.findings.length > cap) {
+    review.ai_review.findings = review.ai_review.findings.slice(0, cap)
   }
 
   // canonical JSON
@@ -135,9 +145,21 @@ export async function runReviewCLI(opts: {
   ensureDirForFile(outMdPath)
   fs.writeFileSync(outMdPath, mdPayload)
 
-  console.log(
-    `[review:${provider === 'local' ? 'local' : (provider as ReviewProvider).name}]` +
-    ` wrote ${path.relative(REPO_ROOT, outJsonPath)} & ${path.relative(REPO_ROOT, outMdPath)}` +
-    ` (${review.ai_review.findings.length} findings)`
-  )
+  const providerLabel = (provider as ReviewProvider).name || 'local'
+  const count = review.ai_review.findings.length
+  console.log(`[review:${providerLabel}] wrote ${path.relative(REPO_ROOT, outJsonPath)} & ${path.relative(REPO_ROOT, outMdPath)} (${count} findings)`)
+
+  // exit policy
+  const top = maxSeverity(review.ai_review.findings as any as { severity: Severity }[]) // type align
+  if (opts.failOn) {
+    const threshold: Severity = opts.failOn === 'critical' ? 'critical' : 'major'
+    const shouldFail = top != null && sevRank[top] >= sevRank[threshold]
+    process.exit(shouldFail ? 1 : 0)
+  } else {
+    const code =
+      top === 'critical' ? 20 :
+      top === 'major'    ? 10 :
+                           0
+    process.exit(code)
+  }
 }

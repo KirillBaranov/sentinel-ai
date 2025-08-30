@@ -1,0 +1,30 @@
+diff --git a/src/API/UsersController.cs b/src/API/UsersController.cs
+index 1111111..2222222 100644
+--- a/src/API/UsersController.cs
++++ b/src/API/UsersController.cs
+@@ -10,0 +11,8 @@ public class UsersController : ControllerBase {
++    // TODO: handle paging properly
++    [HttpGet("/users")]
++    public async Task<IActionResult> Get() {
++        Console.WriteLine("Fetching users..."); // style.no-console-debug
++        using var client = new HttpClient();    // reliability.httpclient-factory
++        var q = "SELECT * FROM Users WHERE name = '" + Request.Query["name"] + "'"; // security.no-sql-concat
++        return Ok(new[] { "ok" });
++    }
+}
+diff --git a/src/Application/UserService.cs b/src/Application/UserService.cs
+index 3333333..4444444 100644
+--- a/src/Application/UserService.cs
++++ b/src/Application/UserService.cs
+@@ -20,0 +21,4 @@ public class UserService {
++    public async Task<int> CalculateAsync(int id) { // reliability.async-cancellationtoken (heuristic)
++        await Task.Delay(10);
++        return id;
++    }
+}
+diff --git a/src/Infrastructure/Orders/Internal/OrderSecrets.cs b/src/Infrastructure/Orders/Internal/OrderSecrets.cs
+index 5555555..6666666 100644
+--- a/src/Infrastructure/Orders/Internal/OrderSecrets.cs
++++ b/src/Infrastructure/Orders/Internal/OrderSecrets.cs
+@@ -1,0 +2,1 @@
++using Billing.Internal.Keys; // arch.no-internal-cross-module

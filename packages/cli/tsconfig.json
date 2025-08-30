@@ -4,9 +4,10 @@
     "module": "ESNext",
     "baseUrl": ".",
     "paths": {
-      "@sentinel/core": ["../core/src/index.ts"],
-      "@sentinel/provider-types": ["../providers/types/src/index.ts"],
-      "@sentinel/provider-mock": ["../providers/mock/src/index.ts"]
+      "@sentinel/core": "workspace:*",
+      "@sentinel/provider-types": "workspace:*",
+      "@sentinel/provider-mock": "workspace:*",
+      "@sentinel/provider-local": "workspace:*"
     }
   },
   "include": ["src"]

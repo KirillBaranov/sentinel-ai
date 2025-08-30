@@ -1,15 +1,10 @@
-import type { ReviewProvider } from '@sentinel/provider-types'
-import type { ReviewJson, BoundariesConfig, RulesJson } from '@sentinel/core'
+import type { ReviewProvider, ProviderReviewInput } from '@sentinel/provider-types'
+import type { ReviewJson, ReviewFinding, Severity } from '@sentinel/core'
 
 // Mock provider - простая заглушка, которая возвращает 1–2 фиктивных замечания
 export const mockProvider: ReviewProvider = {
   name: 'mock',
-  async review(input: {
-    diffText: string
-    profile: string
-    rules?: RulesJson | null
-    boundaries?: BoundariesConfig | null
-  }): Promise<ReviewJson> {
+  async review(input: ProviderReviewInput): Promise<ReviewJson> {
     const findings = []
 
     // примитивные сигналы, чтобы было видно, что провайдер «работает»
@@ -17,7 +12,7 @@ export const mockProvider: ReviewProvider = {
       findings.push({
         rule: 'style.no-todo-comment',
         area: 'DX',
-        severity: 'minor',
+        severity: 'minor' as Severity,
         file: 'unknown',
         locator: 'L0',
         finding: ['TODO comment found'],
@@ -30,7 +25,7 @@ export const mockProvider: ReviewProvider = {
       findings.push({
         rule: 'arch.modular-boundaries',
         area: 'Architecture',
-        severity: 'critical',
+        severity: 'critical' as Severity,
         file: 'unknown',
         locator: 'L0',
         finding: ['Cross-feature internal import'],

@@ -1,19 +1,31 @@
-import type { ReviewFinding } from './types.js';
-import { DEFAULT_SEVERITY_MAP, type RenderOptions, type Severity } from './render-config.js';
+import type { ReviewFinding } from './normalize.js';
+import type { Severity } from './types.js';
+import { DEFAULT_SEVERITY_MAP, type RenderOptions } from './render-config';
 
 type Grouped = Record<Severity, ReviewFinding[]>;
 
 function groupFindings(findings: ReviewFinding[], order: Severity[]): Grouped {
   const g: Grouped = { critical: [], major: [], minor: [], info: [] };
-  for (const f of findings) g[f.severity as Severity]?.push(f);
+  for (const f of findings) {
+    const severity = f.severity as Severity;
+    if (g[severity]) {
+      g[severity].push(f);
+    }
+  }
   for (const key of Object.keys(g) as Severity[]) {
-    g[key].sort((a,b) =>
-      (a.area || '').localeCompare(b.area || '') ||
-      (a.file || '').localeCompare(b.file || '')
-    );
+    if (g[key]) {
+      g[key].sort((a,b) =>
+        (a.area || '').localeCompare(b.area || '') ||
+        (a.file || '').localeCompare(b.file || '')
+      );
+    }
   }
   const out: Grouped = { critical: [], major: [], minor: [], info: [] };
-  for (const s of order) out[s] = g[s];
+  for (const s of order) {
+    if (g[s]) {
+      out[s] = g[s];
+    }
+  }
   return out;
 }
 
@@ -70,7 +82,7 @@ export function renderMarkdown(
     }
     for (const [k, list] of byArea) {
       const [, file] = k.split('|');
-      const ruleId = list[0].rule;
+      const ruleId = list[0]?.rule || 'unknown';
       out.push(`- **${ruleId}** in \`${file || '—'}\``);
       for (const f of list) {
         const what = f.finding?.[0] ?? '';

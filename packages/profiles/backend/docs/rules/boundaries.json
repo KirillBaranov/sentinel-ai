@@ -1,0 +1,29 @@
+{
+  "layers": [
+    { "name": "api", "path": "src/API/**", "index": 4 },
+    { "name": "application", "path": "src/Application/**", "index": 3 },
+    { "name": "infrastructure", "path": "src/Infrastructure/**", "index": 2 },
+    { "name": "domain", "path": "src/Domain/**", "index": 1 }
+  ],
+  "forbidden": [
+    {
+      "rule": "layer-violation-infra-up",
+      "from": { "glob": "src/Infrastructure/**" },
+      "to": { "glob": "src/Application/**" },
+      "explain": "Infrastructure must not be referenced by higher layers."
+    },
+    {
+      "rule": "layer-violation-app-to-api",
+      "from": { "glob": "src/Application/**" },
+      "to": { "glob": "src/API/**" },
+      "explain": "Application should not depend on API (composition root)."
+    },
+    {
+      "rule": "layer-violation-domain-to-others",
+      "from": { "glob": "src/Domain/**" },
+      "to": { "glob": "src/**" },
+      "allowVia": [ "src/Domain/**" ],
+      "explain": "Domain must be pure; no dependencies on higher layers."
+    }
+  ]
+}

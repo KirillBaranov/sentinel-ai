@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "domain": "backend",
+  "metadata": { "updatedAt": "2025-08-30", "owner": "profiles/backend" },
+  "rules": [
+    {
+      "id": "arch.layering",
+      "area": "Architecture",
+      "severity": "critical",
+      "description": "Respect Clean layering: API→Application→Domain; Infrastructure must not be referenced by higher layers.",
+      "link": "docs/handbook/architecture.md#layering-clean-ish",
+      "scope": ["changed","project"],
+      "trigger": { "type": "heuristic", "signals": ["import-graph","path-glob"] },
+      "status": "active",
+      "version": 1,
+      "ask_feedback": true
+    },
+    {
+      "id": "arch.no-internal-cross-module",
+      "area": "Architecture",
+      "severity": "major",
+      "description": "No cross-module imports of Internal namespaces.",
+      "link": "docs/handbook/architecture.md#module-boundaries",
+      "examples": { "bad": ["using Orders.Internal.Services;"] },
+      "scope": ["changed"],
+      "trigger": { "type": "pattern", "signals": ["added-line:(?i)using\\s+.+\\.Internal(\\.|;)"] },
+      "status": "active",
+      "version": 1
+    },
+    {
+      "id": "style.no-todo-comment",
+      "area": "DX",
+      "severity": "minor",
+      "description": "Avoid TODO comments; link an issue instead.",
+      "link": "docs/handbook/style.md",
+      "scope": ["changed"],
+      "trigger": { "type": "pattern", "signals": ["added-line:(?i)\\b//\\s*TODO\\b","added-line:/\\*\\s*TODO"] },
+      "status": "active",
+      "version": 1
+    },
+    {
+      "id": "style.no-console-debug",
+      "area": "DX",
+      "severity": "minor",
+      "description": "Avoid Console.WriteLine/Debug.WriteLine in production code.",
+      "link": "docs/handbook/style.md",
+      "scope": ["changed"],
+      "trigger": { "type": "pattern", "signals": ["added-line:Console\\.Write(Line|)","added-line:Debug\\.Write(Line|)"] },
+      "status": "active",
+      "version": 1
+    },
+    {
+      "id": "reliability.httpclient-factory",
+      "area": "Reliability",
+      "severity": "major",
+      "description": "Do not instantiate HttpClient directly; use IHttpClientFactory.",
+      "link": "docs/handbook/style.md",
+      "scope": ["changed","file"],
+      "trigger": { "type": "pattern", "signals": ["added-line:new\\s+HttpClient\\s*\\("] },
+      "status": "active",
+      "version": 1
+    },
+    {
+      "id": "security.no-sql-concat",
+      "area": "Security",
+      "severity": "critical",
+      "description": "Avoid string-concatenated SQL; use parameters or ORM.",
+      "link": "docs/handbook/style.md",
+      "examples": { "bad": ["new SqlCommand(\"SELECT * FROM Users WHERE name = '\" + name + \"'\", conn)"] },
+      "scope": ["changed"],
+      "trigger": { "type": "pattern", "signals": ["added-line:(?i)SqlCommand\\s*\\(\\s*\".*\\+"] },
+      "status": "active",
+      "version": 1,
+      "ask_feedback": true
+    },
+    {
+      "id": "reliability.async-cancellationtoken",
+      "area": "Reliability",
+      "severity": "major",
+      "description": "Async public methods should accept a CancellationToken.",
+      "link": "docs/handbook/style.md",
+      "scope": ["changed"],
+      "trigger": { "type": "pattern", "signals": ["added-line:(?i)public\\s+async\\s+Task(?:<[^>]+>)?\\s+\\w+\\s*\\([^\\)]*\\)(?!.*CancellationToken)"] },
+      "status": "experimental",
+      "version": 1
+    }
+  ]
+}

@@ -8,5 +8,5 @@
       "@sentinel/provider-types": ["../types/src/index.ts"]
     }
   },
-  "include": ["index.ts"]
+  "include": ["src"]
 }

@@ -1,8 +1,8 @@
-import { parseUnifiedDiff } from './diff.js'
-import { makeFingerprint, type ReviewFinding } from './normalize.js'
-import type { RulesJson, RuleItem } from './types.js'
-import type { BoundariesConfig } from './boundaries.js'
-import { extractImportSpecifier, checkForbidden, toPosix } from './boundaries.js'
+import { parseUnifiedDiff } from '@sentinel/core'
+import { makeFingerprint, type ReviewFinding } from '@sentinel/core'
+import type { RulesJson, RuleItem } from '@sentinel/core'
+import type { BoundariesConfig } from '@sentinel/core'
+import { extractImportSpecifier, checkForbidden, toPosix } from '@sentinel/core'
 
 export type EngineInput = {
   diffText: string

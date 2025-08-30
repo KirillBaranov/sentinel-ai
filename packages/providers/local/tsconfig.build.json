@@ -1,0 +1,15 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "outDir": "dist",
+    "declaration": true,
+    "declarationMap": true,
+    "module": "ESNext"
+  },
+  "references": [
+    { "path": "../../core" },
+    { "path": "../types" }
+  ],
+  "include": ["*.ts"]
+}
