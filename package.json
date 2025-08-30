@@ -47,6 +47,8 @@
     "clean": "pnpm -r run clean",
     "clean:all": "rm -rf node_modules && rm -rf packages/*/node_modules && rm -rf apps/*/node_modules",
 
+    "sentinel:profile:init": "pnpm --filter @sentinel/cli exec tsx src/index.ts init-profile",
+
     "sentinel:rules:validate": "pnpm --filter @sentinel/core exec tsx src/scripts/validate-rules.ts --profile frontend --profiles-dir packages/profiles",
 
     "sentinel:context": "pnpm --filter @sentinel/cli exec tsx src/index.ts build-context --profile frontend",

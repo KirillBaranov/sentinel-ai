@@ -11,8 +11,9 @@ import {
   renderMarkdown,
   type RenderOptions,
   type SeverityMap,
-  type ReviewJson
+  type ReviewJson,
 } from '@sentinel/core'
+import { initProfileCLI } from './cmd/init-profile'
 
 const program = new Command()
 
@@ -30,6 +31,19 @@ program
   .option('--out <outFile>', 'output file (repo-root relative)')
   .action(async (opts) => {
     await buildContextCLI({ ...opts })
+  })
+
+  // ──────────────────────────────────────────────────────────────────────────────
+  // init-profile
+  // ──────────────────────────────────────────────────────────────────────────────
+  program
+  .command('init-profile')
+  .argument('<name>', 'profile name (e.g. frontend-company-x)')
+  .option('--out-dir <dir>', 'profiles root (default: packages/profiles)')
+  .option('--force', 'overwrite existing files', false)
+  .option('--with-adr', 'create docs/adr with a sample', false)
+  .action(async (name, opts) => {
+    await initProfileCLI({ name, outDir: opts.outDir, force: !!opts.force, withAdr: !!opts.withAdr })
   })
 
 // ──────────────────────────────────────────────────────────────────────────────

@@ -27,14 +27,12 @@ function resolveProfileRoot(repoRoot: string, profile: string, profilesDir?: str
     return abs
   }
 
-  // общий каталог профилей
   if (profilesDir) {
     const base = path.isAbsolute(profilesDir) ? profilesDir : path.join(repoRoot, profilesDir)
     const candidate = path.join(base, profile)
     if (fs.existsSync(candidate)) return candidate
   }
 
-  // стандартные места
   const candidates = [
     path.join(repoRoot, 'profiles', profile),
     path.join(repoRoot, 'packages', 'profiles', profile),
@@ -69,7 +67,6 @@ function loadBoundaries(profile: string, profilesDir?: string): BoundariesConfig
 function pickProvider(id?: string): ReviewProvider {
   const name = (id || process.env.SENTINEL_PROVIDER || 'local').toLowerCase()
   if (name === 'mock') return mockProvider
-  // дефолт — локальный провайдер (детерминированный)
   return localProvider
 }
 
