@@ -20,5 +20,10 @@
     "resolveJsonModule": true,
 
     "baseUrl": "."
-  }
+  },
+  "exclude": [
+    "src/**/__tests__/**",
+    "src/**/*.spec.ts",
+    "src/**/*.test.ts"
+  ]
 }

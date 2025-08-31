@@ -1,16 +1,10 @@
 {
-  "extends": "../../../tsconfig.base.json",
+  "extends": "../../tsconfig.base.json",
   "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
     "noEmit": true,
-    "baseUrl": ".",
-    "paths": {
-      "@sentinel/core": ["workspace:*"],
-      "@sentinel/provider-types": ["workspace:*"]
-    }
+    "baseUrl": "."
   },
-  "references": [
-    { "path": "../../core/tsconfig.build.json" },
-    { "path": "../types/tsconfig.build.json" }
-  ],
   "include": ["src"]
 }

@@ -4,11 +4,11 @@ import path from 'node:path'
 import { Command } from 'commander'
 import { bold, dim } from 'colorette'
 
-import { buildContextCLI } from './context.js'
-import { runReviewCLI } from './review.js'
-import { renderHtmlCLI } from './cmd/render-html.js'
-import { initProfileCLI } from './cmd/init-profile.js'
-import { loadConfig } from './config.js'
+import { buildContextCLI } from './context'
+import { runReviewCLI } from './review'
+import { renderHtmlCLI } from './cmd/render-html'
+import { initProfileCLI } from './cmd/init-profile'
+import { loadConfig } from './config'
 
 import {
   type RenderOptions,

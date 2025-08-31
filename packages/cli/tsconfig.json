@@ -1,13 +1,10 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "noEmit": true,
     "baseUrl": "."
   },
-  "references": [
-    { "path": "../core/tsconfig.build.json" },
-    { "path": "../providers/types/tsconfig.build.json" },
-    { "path": "../providers/local/tsconfig.build.json" },
-    { "path": "../providers/mock/tsconfig.build.json" }
-  ],
   "include": ["src"]
 }
