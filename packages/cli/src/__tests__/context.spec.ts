@@ -115,7 +115,6 @@ describe('buildContext (with sandbox)', () => {
     )
     fs.rmSync(rulesPath, { force: true })
 
-    // проверяем что файл действительно удален
     expect(fs.existsSync(rulesPath)).toBe(false)
 
     expect(() =>
