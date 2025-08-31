@@ -1,12 +1,14 @@
 {
-  "extends": "../../../tsconfig.base.json",
+  "extends": "../../tsconfig.base.json",
   "compilerOptions": {
+    "target": "ES2022",
     "module": "ESNext",
-    "baseUrl": ".",
-    "paths": {
-      "@sentinel/core": ["../../core/src/index.ts"],
-      "@sentinel/provider-types": ["../types/src/index.ts"]
-    }
+    "moduleResolution": "Bundler",
+    "declaration": true,
+    "declarationMap": true,
+    "outDir": "dist",
+    "rootDir": "src"
   },
-  "include": ["src"]
+  "include": ["src/**/*.ts"],
+  "exclude": ["dist", "node_modules", "**/__tests__/**", "**/*.spec.ts"]
 }
