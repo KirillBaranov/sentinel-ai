@@ -2,28 +2,23 @@
   "compilerOptions": {
     "target": "ES2022",
     "lib": ["ES2022", "DOM"],
-    "module": "ESNext",
-    "moduleResolution": "Bundler",
-    "types": ["node"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+
     "strict": true,
     "noImplicitAny": true,
     "noUncheckedIndexedAccess": true,
     "skipLibCheck": true,
-    "declaration": true,
-    "declarationMap": true,
+
+    "declaration": false,
+    "declarationMap": false,
     "sourceMap": true,
     "inlineSources": true,
+
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
-    "baseUrl": ".",
-    "paths": {
-      "@sentinel/core": ["packages/core/src/index.ts"],
-      "@sentinel/provider-local": ["packages/providers/local/src/index.ts"],
-      "@sentinel/provider-types": ["packages/providers/types/src/index.ts"],
-      "@sentinel/provider-mock": ["packages/providers/mock/src/index.ts"],
-      "@sentinel/provider-openai": ["packages/providers/openai/src/index.ts"],
-      "@sentinel/provider-claude": ["packages/providers/claude/src/index.ts"]
-    }
+
+    "baseUrl": "."
   }
 }

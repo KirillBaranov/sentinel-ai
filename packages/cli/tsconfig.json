@@ -1,14 +1,13 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "module": "ESNext",
-    "baseUrl": ".",
-    "paths": {
-      "@sentinel/core": "workspace:*",
-      "@sentinel/provider-types": "workspace:*",
-      "@sentinel/provider-mock": "workspace:*",
-      "@sentinel/provider-local": "workspace:*"
-    }
+    "baseUrl": "."
   },
+  "references": [
+    { "path": "../core/tsconfig.build.json" },
+    { "path": "../providers/types/tsconfig.build.json" },
+    { "path": "../providers/local/tsconfig.build.json" },
+    { "path": "../providers/mock/tsconfig.build.json" }
+  ],
   "include": ["src"]
 }

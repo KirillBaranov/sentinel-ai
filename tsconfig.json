@@ -3,7 +3,9 @@
   "references": [
     { "path": "packages/core" },
     { "path": "packages/cli" },
+    { "path": "packages/providers/types" },
     { "path": "packages/providers/mock" },
+    { "path": "packages/providers/local" },
     { "path": "packages/providers/openai" },
     { "path": "packages/providers/claude" },
     { "path": "apps/demo" }

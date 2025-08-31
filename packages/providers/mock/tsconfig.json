@@ -1,12 +1,16 @@
 {
   "extends": "../../../tsconfig.base.json",
   "compilerOptions": {
-    "module": "ESNext",
+    "noEmit": true,
     "baseUrl": ".",
     "paths": {
-      "@sentinel/core": ["../../core/src/index.ts"],
-      "@sentinel/provider-types": ["../types/src/index.ts"]
+      "@sentinel/core": ["workspace:*"],
+      "@sentinel/provider-types": ["workspace:*"]
     }
   },
-  "include": ["index.ts"]
+  "references": [
+    { "path": "../../core/tsconfig.build.json" },
+    { "path": "../types/tsconfig.build.json" }
+  ],
+  "include": ["src"]
 }
