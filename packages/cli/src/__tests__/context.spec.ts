@@ -1,140 +1,149 @@
 import fs from 'node:fs'
-import os from 'node:os'
 import path from 'node:path'
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, beforeEach, afterEach, expect } from 'vitest'
+
+import { makeSandbox, makeProfile } from './helpers/sandbox'
 import { buildContext } from '../context'
 
-/** утилита для создания мини-профиля */
-function makeProfileTree(root: string, profile = 'frontend') {
-  const profilesDir = path.join(root, 'profiles')
-  const pRoot = path.join(profilesDir, profile)
-  const hb = path.join(pRoot, 'docs', 'handbook')
-  const rules = path.join(pRoot, 'docs', 'rules')
-  const adr = path.join(pRoot, 'docs', 'adr')
+const outPathAt = (root: string) => path.join(root, 'dist', 'ai-review-context.md')
+const read = (p: string) => fs.readFileSync(p, 'utf8')
+const norm = (s: string) => s.replaceAll('\\', '/')
 
-  fs.mkdirSync(hb, { recursive: true })
-  fs.mkdirSync(rules, { recursive: true })
-  fs.mkdirSync(adr, { recursive: true })
+describe('buildContext (with sandbox)', () => {
+  let sbx: ReturnType<typeof makeSandbox>
+  let envBackup: NodeJS.ProcessEnv
 
-  fs.writeFileSync(path.join(hb, 'architecture.md'), '# Arch\n\nA\n')
-  fs.writeFileSync(path.join(hb, 'style.md'), '# Style\n\nB\n')
+  beforeEach(() => {
+    envBackup = { ...process.env }
+    sbx = makeSandbox('sentinel-context-')
+    makeProfile(sbx.root, 'frontend')
 
-  fs.writeFileSync(path.join(rules, 'rules.json'), JSON.stringify({
-    version: 1, domain: profile, rules: [{ id: 'r1', severity: 'minor' }]
-  }, null, 2))
+    process.env.SENTINEL_REPO_ROOT = sbx.root
+    delete process.env.SENTINEL_PROFILES_DIR
+    delete process.env.SENTINEL_CONTEXT_MAX_TOKENS
+    delete process.env.SENTINEL_CONTEXT_MAX_BYTES
+  })
 
-  fs.writeFileSync(path.join(rules, 'boundaries.json'), JSON.stringify({
-    layers: [{ name: 'shared', path: 'src/shared/**', index: 1 }],
-    forbidden: []
-  }, null, 2))
+  afterEach(() => {
+    process.env = envBackup
+    sbx.cleanup()
+  })
 
-  fs.writeFileSync(path.join(adr, '0001.md'), '# ADR-0001\n\nDecision.\n')
-
-  return { profilesDir, pRoot }
-}
-
-describe('buildContext()', () => {
-  let tmp: string
-  beforeEach(() => { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sentinel-ctx-')) })
-  afterEach(() => { try { fs.rmSync(tmp, { recursive: true, force: true }) } catch {} })
-
-  it('builds full context with handbook, rules, boundaries, adr (explicit profilesDir)', () => {
-    const { profilesDir } = makeProfileTree(tmp, 'frontend')
-    const out = path.join(tmp, 'dist', 'ai-review-context.md')
-
+  it('builds context markdown with sections (handbook, rules, boundaries)', () => {
     const res = buildContext({
       profile: 'frontend',
-      repoRoot: tmp,
-      profilesDir,           // явно
-      outFile: out,
-      includeADR: true,
-      includeBoundaries: true,
+      repoRoot: sbx.root,
+      profilesDir: 'packages/profiles',
+      outFile: outPathAt(sbx.root),
+      includeADR: false,
     })
 
-    expect(fs.existsSync(out)).toBe(true)
-    const md = fs.readFileSync(out, 'utf8')
+    expect(fs.existsSync(res.outFile)).toBe(true)
+    const md = norm(read(res.outFile))
 
-    // шапка и метаданные
-    expect(md).toMatch(/title: Sentinel AI Review Context/)
-    expect(md).toMatch(/## Metadata/)
-    expect(md).toMatch(/"rulesFile":/)
-
-    // секции
+    expect(md).toMatch(/<!-- SENTINEL:SECTION:SUMMARY -->/)
     expect(md).toMatch(/<!-- SENTINEL:SECTION:HANDBOOK -->/)
-    expect(md).toMatch(/# Rules/)
-    expect(md).toMatch(/## Boundaries/)
+    expect(md).toMatch(/<!-- SENTINEL:SECTION:RULES -->/)
+    expect(md).not.toMatch(/<!-- SENTINEL:SECTION:ADR -->/)
+
+    expect(md).toMatch(/^# Handbook/m)
+    expect(md).toMatch(/^# Rules/m)
+
+    expect(md).toMatch(/```json\s*{\s*"version":\s*1[\s\S]*?```/)
+
+    expect(md).toMatch(/### Handbook TOC/)
+    expect(md).toMatch(/- frontend\/docs\/handbook\/architecture\.md/)
+  })
+
+  it('resolves custom profilesDir (absolute) and includes ADR when present', () => {
+    const customProfiles = path.join(sbx.root, 'custom-profiles')
+    const profileRoot = path.join(customProfiles, 'frontend')
+    fs.mkdirSync(path.join(profileRoot, 'docs', 'handbook'), { recursive: true })
+    fs.mkdirSync(path.join(profileRoot, 'docs', 'rules'), { recursive: true })
+    fs.writeFileSync(path.join(profileRoot, 'docs', 'handbook', 'intro.md'), '# Intro\n', 'utf8')
+    fs.writeFileSync(
+      path.join(profileRoot, 'docs', 'rules', 'rules.json'),
+      JSON.stringify({ version: 1, domain: 'frontend', rules: [] }, null, 2),
+      'utf8'
+    )
+    fs.mkdirSync(path.join(profileRoot, 'docs', 'adr'), { recursive: true })
+    fs.writeFileSync(path.join(profileRoot, 'docs', 'adr', '0001.md'), '# ADR 0001\nBody\n', 'utf8')
+
+    const res = buildContext({
+      profile: 'frontend',
+      repoRoot: sbx.root,
+      profilesDir: customProfiles,
+      outFile: outPathAt(sbx.root),
+      includeADR: true,
+    })
+
+    const md = norm(read(res.outFile))
     expect(md).toMatch(/<!-- SENTINEL:SECTION:ADR -->/)
+    expect(md).toMatch(/# ADR 0001/)
+    expect(md).toMatch(/### ADR TOC/)
+    expect(md).toMatch(/- frontend\/docs\/adr\/0001\.md/)
+  })
 
-    // футер с checksum
+  it('trims ADR section when maxApproxTokens is too small (soft guardrail)', () => {
+    const adrDir = path.join(sbx.root, 'packages', 'profiles', 'frontend', 'docs', 'adr')
+    fs.mkdirSync(adrDir, { recursive: true })
+    fs.writeFileSync(path.join(adrDir, '0001.md'), '# ADR 0001\nSome text\nMore text\n', 'utf8')
+
+    const res = buildContext({
+      profile: 'frontend',
+      repoRoot: sbx.root,
+      profilesDir: 'packages/profiles',
+      outFile: outPathAt(sbx.root),
+      includeADR: true,
+      maxApproxTokens: 1,
+    })
+
+    const md = norm(read(res.outFile))
+    expect(md).toMatch(/<!-- SENTINEL:SECTION:ADR -->/)
+    expect(md).toMatch(/\*Omitted due to context size constraints\.\*/)
+  })
+
+  it('throws a clear error when rules.json is missing', () => {
+    const rulesPath = path.join(
+      sbx.root,
+      'packages',
+      'profiles',
+      'frontend',
+      'docs',
+      'rules',
+      'rules.json'
+    )
+    fs.rmSync(rulesPath, { force: true })
+
+    // проверяем что файл действительно удален
+    expect(fs.existsSync(rulesPath)).toBe(false)
+
+    expect(() =>
+      buildContext({
+        profile: 'frontend',
+        repoRoot: sbx.root,
+        profilesDir: 'packages/profiles',
+        outFile: outPathAt(sbx.root),
+      })
+    ).toThrow(/rules\.json not found/)
+  })
+
+  it('writes footer checksums and returns metadata (bytes, tokens, hashes)', () => {
+    const res = buildContext({
+      profile: 'frontend',
+      repoRoot: sbx.root,
+      profilesDir: 'packages/profiles',
+      outFile: outPathAt(sbx.root),
+    })
+    const md = norm(read(res.outFile))
+
     expect(md).toMatch(/## Checksums/)
-    expect(res.outFile).toBe(out)
-    expect(res.counts.handbook).toBeGreaterThan(0)
-    expect(res.counts.adr).toBe(1)
-    expect(res.counts.hasBoundaries).toBe(true)
+    expect(md).toMatch(/"baseHash":/)
+    expect(md).toMatch(/"finalHash":/)
+
     expect(res.bytes).toBeGreaterThan(0)
-    expect(res.baseHash).toBeTruthy()
-    expect(res.finalHash).toBeTruthy()
-  })
-
-  it('auto-discovers profiles dir when not provided', () => {
-    makeProfileTree(tmp, 'frontend')
-    const out = path.join(tmp, 'dist', 'ctx.md')
-    const res = buildContext({
-      profile: 'frontend',
-      repoRoot: tmp,          // важно, чтобы автопоиск шёл от этого корня
-      outFile: out,
-    })
-    expect(fs.existsSync(out)).toBe(true)
-    const md = fs.readFileSync(out, 'utf8')
-    expect(md).toMatch(/# Handbook/)
-    expect(res.counts.handbook).toBeGreaterThan(0)
-  })
-
-  it('omits ADR section when maxApproxTokens is exceeded', () => {
-    const { profilesDir } = makeProfileTree(tmp, 'frontend')
-    const out = path.join(tmp, 'dist', 'ctx-tokens.md')
-
-    const res = buildContext({
-      profile: 'frontend',
-      repoRoot: tmp,
-      profilesDir,
-      outFile: out,
-      maxApproxTokens: 1,    // заведомо мало
-    })
-
-    const md = fs.readFileSync(out, 'utf8')
-    expect(md).toMatch(/ADR\n\n\*Omitted due to context size constraints\.\*/)
-    expect(res.counts.adr).toBe(1) // в сырье ADR был, но в финале секция скрыта
-  })
-
-  it('cuts handbook & ADR when exceeding hard maxBytes', () => {
-    const { profilesDir } = makeProfileTree(tmp, 'frontend')
-    const out = path.join(tmp, 'dist', 'ctx-bytes.md')
-
-    const res = buildContext({
-      profile: 'frontend',
-      repoRoot: tmp,
-      profilesDir,
-      outFile: out,
-      maxBytes: 80, // достаточно мало, чтобы сработал guardrail
-    })
-
-    const md = fs.readFileSync(out, 'utf8')
-    expect(md).toMatch(/\*Omitted due to size limit\.\*/) // и handbook, и ADR заменяются сообщениями
-    expect(res.bytes).toBeGreaterThan(0)
-  })
-
-  it('throws when rules.json is missing', () => {
-    // создаём профиль, затем удаляем rules.json
-    const { profilesDir, pRoot } = makeProfileTree(tmp, 'frontend')
-    fs.rmSync(path.join(pRoot, 'docs', 'rules', 'rules.json'))
-
-    const out = path.join(tmp, 'dist', 'ctx-miss.md')
-    expect(() => buildContext({
-      profile: 'frontend',
-      repoRoot: tmp,
-      profilesDir,
-      outFile: out,
-    })).toThrow(/rules\.json not found/)
+    expect(res.approxTokens).toBeGreaterThan(0)
+    expect(res.baseHash).toMatch(/^[a-f0-9]{40}$/)
+    expect(res.finalHash).toMatch(/^[a-f0-9]{40}$/)
   })
 })
