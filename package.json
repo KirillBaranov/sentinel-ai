@@ -49,12 +49,16 @@
     "sentinel:context:prod": "pnpm -r build && pnpm --filter @sentinel/cli exec node dist/index.js build-context --profile frontend",
     "sentinel:review:local": "pnpm --filter @sentinel/cli exec tsx src/index.ts review --provider local --diff fixtures/changes.diff --profile frontend --profiles-dir packages/profiles --out-md review.md --out-json review.json",
     "sentinel:review:local:nofail": "pnpm --filter @sentinel/cli exec tsx src/index.ts review --provider local --diff fixtures/changes.diff --profile frontend --profiles-dir packages/profiles --out-md review.md --out-json review.json --fail-on none",
+    "sentinel:review": "pnpm --filter @sentinel/cli exec tsx src/index.ts review --provider local --diff fixtures/changes.diff --profiles-dir packages/profiles --out-md review.md --out-json review.json",
+    "sentinel:review:direct": "cd packages/cli && npx tsx src/index.ts review --provider local --diff ../../fixtures/changes.diff --profiles-dir ../profiles --out-md ../../review.md --out-json ../../review.json",
     "sentinel:review:local:debug": "pnpm --filter @sentinel/cli exec tsx src/index.ts review --provider local --diff fixtures/changes.diff --profile frontend --profiles-dir packages/profiles --out-md review.md --out-json review.json --debug",
     "sentinel:review:mock": "pnpm --filter @sentinel/cli exec tsx src/index.ts review --provider mock --diff fixtures/changes.diff --profile frontend --profiles-dir packages/profiles --out-md review.md --out-json review.json",
     "sentinel:review:mock:nofail": "pnpm --filter @sentinel/cli exec tsx src/index.ts review --provider mock --diff fixtures/changes.diff --profile frontend --profiles-dir packages/profiles --out-md review.md --out-json review.json --fail-on none",
     "sentinel:review:prod": "pnpm -r build && pnpm --filter @sentinel/cli exec node dist/index.js review --provider mock --diff fixtures/changes.diff --profile frontend --profiles-dir packages/profiles --out-md review.md --out-json review.json",
     "sentinel:render-md": "pnpm --filter @sentinel/cli exec tsx src/index.ts render-md --in dist/review.json --out dist/review.human.md",
-    "sentinel:render-html": "pnpm --filter @sentinel/cli exec tsx src/index.ts render-html --in dist/review.json --out dist/review.html"
+    "sentinel:render-html": "pnpm --filter @sentinel/cli exec tsx src/index.ts render-html --in dist/review.json --out dist/review.html",
+    "sentinel:review:hello": "pnpm --filter @sentinel/cli exec tsx src/index.ts review --provider local --diff fixtures/changes.diff --profile hello-world --profiles-dir packages/profiles --out-md review.md --out-json review.json --fail-on none",
+    "sentinel:review:hello:env": "SENTINEL_PROFILE=hello-world pnpm sentinel:review:local:nofail"
   },
   "lint-staged": {
     "*.{ts,tsx,js,jsx,json,md,yml,yaml}": [
