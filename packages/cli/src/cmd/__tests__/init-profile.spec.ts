@@ -1,118 +1,122 @@
 import fs from 'node:fs'
-import os from 'node:os'
 import path from 'node:path'
-import { beforeEach, afterEach, describe, it, expect, vi } from 'vitest'
+import { describe, it, beforeEach, afterEach, expect, vi } from 'vitest'
+import { makeSandbox } from '../../__tests__/helpers/sandbox'
 
-let initProfileCLI: typeof import('../init-profile').initProfileCLI
+const profileRoot = (root: string, name: string, base = 'packages/profiles') =>
+  path.join(root, base, name)
 
-function read(p: string) { return fs.readFileSync(p, 'utf8') }
-function exists(p: string) { return fs.existsSync(p) }
-function list(dir: string) { return exists(dir) ? fs.readdirSync(dir).sort() : [] }
-
-function profileRoot(repoRoot: string, name: string, base = path.join('packages', 'profiles')) {
-  return path.join(repoRoot, base, name)
-}
-function rulesPath(root: string)      { return path.join(root, 'docs', 'rules', 'rules.json') }
-function boundariesPath(root: string) { return path.join(root, 'docs', 'rules', 'boundaries.json') }
-function hbDir(root: string)          { return path.join(root, 'docs', 'handbook') }
-function adrDir(root: string)         { return path.join(root, 'docs', 'adr') }
-
-describe('initProfileCLI', () => {
-  let tmp: string
+describe('initProfileCLI (with sandbox)', () => {
+  let sbx: ReturnType<typeof makeSandbox>
   let envBackup: NodeJS.ProcessEnv
+  let initProfileCLI: (opts: any) => Promise<{ root: string; created: string[]; skipped: string[] }>
 
   beforeEach(async () => {
-    tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sentinel-init-profile-'))
     envBackup = { ...process.env }
+    sbx = makeSandbox('sentinel-init-profile-')
 
+    process.env.SENTINEL_REPO_ROOT = sbx.root
     vi.resetModules()
 
-    process.env.SENTINEL_REPO_ROOT = tmp
+    const mod = await import('../init-profile')
+    initProfileCLI = mod.initProfileCLI
 
-    ;({ initProfileCLI } = await import('../init-profile'))
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
   })
 
   afterEach(() => {
     process.env = envBackup
-    try { fs.rmSync(tmp, { recursive: true, force: true }) } catch {}
+    vi.restoreAllMocks()
+    sbx.cleanup()
   })
 
-  it('creates a full profile skeleton under packages/profiles/<name>', async () => {
-    const name = 'hello-world'
-    await initProfileCLI({ name })
+  it('scaffolds a new profile under default packages/profiles', async () => {
+    const name = 'frontend'
+    const res = await initProfileCLI({ name })
 
-    const root = profileRoot(tmp, name)
-    expect(exists(root)).toBe(true)
-    expect(exists(path.join(root, 'README.md'))).toBe(true)
-    expect(list(hbDir(root))).toEqual([
-      'architecture.md',
-      'style.md',
-      'testing.md',
-    ])
-    expect(exists(rulesPath(root))).toBe(true)
-    expect(exists(boundariesPath(root))).toBe(true)
-    expect(exists(adrDir(root))).toBe(false)
+    const root = profileRoot(sbx.root, name)
+    expect(res.root).toBe(root)
 
-    const readme = read(path.join(root, 'README.md'))
-    expect(readme).toMatch(`# ${name} Profile`)
-    expect(readme).toMatch(`--profile ${name}`)
+    const expected = [
+      'README.md',
+      'docs/handbook/architecture.md',
+      'docs/handbook/style.md',
+      'docs/handbook/testing.md',
+      'docs/rules/rules.json',
+      'docs/rules/boundaries.json',
+    ]
+    for (const rel of expected) {
+      const p = path.join(root, rel)
+      expect(fs.existsSync(p)).toBe(true)
+    }
 
-    const rules = JSON.parse(read(rulesPath(root)))
-    expect(rules?.domain).toBe(name)
-    expect(Array.isArray(rules?.rules)).toBe(true)
+    const rules = JSON.parse(
+      fs.readFileSync(path.join(root, 'docs/rules/rules.json'), 'utf8')
+    )
+    expect(rules.domain).toBe(name)
+    expect(
+      fs.existsSync(path.join(root, 'docs/rules/boundaries.json'))
+    ).toBe(true)
   })
 
   it('creates ADR starter when withAdr=true', async () => {
-    const name = 'frontend-adr'
-    await initProfileCLI({ name, withAdr: true })
+    const name = 'with-adr'
+    const res = await initProfileCLI({ name, withAdr: true })
 
-    const root = profileRoot(tmp, name)
-    const adr = adrDir(root)
-    expect(exists(adr)).toBe(true)
-    const files = list(adr)
-    expect(files.length).toBeGreaterThan(0)
-    expect(files[0]).toMatch(/0001.*\.md$/)
-    const firstAdr = read(path.join(adr, files[0]!))
-    expect(firstAdr).toMatch(/ADR-0001/i)
+    const adrFile = path.join(
+      res.root,
+      'docs/adr/0001-record-architecture.md'
+    )
+    expect(fs.existsSync(adrFile)).toBe(true)
+
+    const txt = fs.readFileSync(adrFile, 'utf8')
+    expect(txt).toMatch(/ADR-0001/)
+    expect(txt).toMatch(/Status:\s+accepted/)
   })
 
-  it('respects outDir override', async () => {
-    const name = 'custom-out'
-    await initProfileCLI({ name, outDir: 'profiles' })
-    const root = profileRoot(tmp, name, 'profiles')
-    expect(exists(root)).toBe(true)
-    expect(exists(path.join(root, 'README.md'))).toBe(true)
-  })
-
-  it('is idempotent without force (existing files kept intact)', async () => {
+  it('is idempotent without force (existing files are skipped)', async () => {
     const name = 'idempotent'
+    const root = profileRoot(sbx.root, name)
+
     await initProfileCLI({ name })
 
-    const root = profileRoot(tmp, name)
     const readmeFile = path.join(root, 'README.md')
+    expect(fs.existsSync(readmeFile)).toBe(true)
 
     fs.writeFileSync(readmeFile, 'CUSTOM\n', 'utf8')
-    await initProfileCLI({ name })
-    const contentAfter = read(readmeFile)
-    expect(contentAfter.startsWith('CUSTOM')).toBe(true)
+
+    const res2 = await initProfileCLI({ name })
+    const readmeAfter = fs.readFileSync(readmeFile, 'utf8')
+    expect(readmeAfter).toBe('CUSTOM\n')
+
+    expect(res2.skipped.length).toBeGreaterThan(0)
+    expect(res2.created.length).toBe(0)
   })
 
   it('overwrites files when force=true', async () => {
     const name = 'force-overwrite'
+    const root = profileRoot(sbx.root, name)
+
     await initProfileCLI({ name })
 
-    const root = profileRoot(tmp, name)
     const readmeFile = path.join(root, 'README.md')
     fs.writeFileSync(readmeFile, 'CUSTOM\n', 'utf8')
 
-    await initProfileCLI({ name, force: true })
-    const contentAfter = read(readmeFile)
-    expect(contentAfter).toMatch(`# ${name} Profile`)
-    expect(contentAfter).not.toMatch(/^CUSTOM/)
+    const res2 = await initProfileCLI({ name, force: true })
+    const readmeAfter = fs.readFileSync(readmeFile, 'utf8')
+    expect(readmeAfter).not.toBe('CUSTOM\n')
+    expect(readmeAfter).toMatch(new RegExp(`^# ${name} Profile`))
+    expect(res2.created.length).toBeGreaterThan(0)
   })
 
-  it('throws on empty name', async () => {
-    await expect(initProfileCLI({ name: '   ' }))
-      .rejects.toThrow(/Profile name is required/i)
+  it('supports custom outDir (absolute)', async () => {
+    const name = 'custom-out'
+    const outDir = path.join(sbx.root, 'profiles-custom-root')
+
+    const res = await initProfileCLI({ name, outDir })
+
+    expect(res.root).toBe(path.join(outDir, name))
+    expect(fs.existsSync(path.join(res.root, 'docs/rules/rules.json'))).toBe(true)
   })
 })

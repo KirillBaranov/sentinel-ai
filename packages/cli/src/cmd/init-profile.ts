@@ -1,16 +1,12 @@
+// packages/cli/src/cmd/init-profile.ts
 import fs from 'node:fs'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
 import {
   findRepoRoot,
-  ok,
-  warn,
-  linkifyFile,             // может не понадобиться здесь, но пусть будет консистентно
-  printInitSummary, // ← новый принтер
-  printInitNextSteps,      // ← новый принтер
+  printInitSummary,
+  printInitNextSteps,
 } from '../cli-utils.js'
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT = findRepoRoot()
 
 export type InitProfileOpts = {
@@ -197,10 +193,11 @@ Context / Decision / Consequences.
     if (wrote) created.push(fp); else skipped.push(fp)
   }
 
+  // красивые сводки в едином стиле
   printInitSummary({
     repoRoot: REPO_ROOT,
     profile: name,
-    root: root,
+    root,
     adr: !!opts.withAdr,
     created,
     skipped,
@@ -208,8 +205,10 @@ Context / Decision / Consequences.
 
   printInitNextSteps({
     repoRoot: REPO_ROOT,
-    baseRoot: baseRoot,
-    root: root,
+    baseRoot,
+    root,
     profile: name,
   })
+
+  return { root, created, skipped }
 }

@@ -1,7 +1,5 @@
-// packages/cli/src/cmd/render-md.ts
 import fs from 'node:fs'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
 import type { ReviewJson, ReviewFinding } from '@sentinel/core'
 import {
   findRepoRoot,
@@ -9,8 +7,7 @@ import {
   printRenderSummaryMarkdown,
 } from '../cli-utils.js'
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const REPO_ROOT = findRepoRoot(path.resolve(__dirname))
+const REPO_ROOT = findRepoRoot()
 
 const ICON = {
   critical: '🛑',
@@ -75,7 +72,7 @@ export function renderMarkdownFromJson(json: ReviewJson) {
 }
 
 export async function renderMdCLI(opts: { inFile: string; outFile: string }) {
-  const inAbs = path.isAbsolute(opts.inFile) ? opts.inFile : path.join(REPO_ROOT, opts.inFile)
+  const inAbs  = path.isAbsolute(opts.inFile)  ? opts.inFile  : path.join(REPO_ROOT, opts.inFile)
   const outAbs = path.isAbsolute(opts.outFile) ? opts.outFile : path.join(REPO_ROOT, opts.outFile)
 
   const raw = fs.readFileSync(inAbs, 'utf8')
@@ -90,6 +87,6 @@ export async function renderMdCLI(opts: { inFile: string; outFile: string }) {
     repoRoot: REPO_ROOT,
     inFile: inAbs,
     outFile: outAbs,
-    findings: json.ai_review?.findings?.length ?? 0,
+    findingsCount: json.ai_review?.findings?.length ?? 0,
   })
 }

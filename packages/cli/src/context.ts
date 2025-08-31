@@ -1,4 +1,4 @@
-// packages/cli/src/context.ts
+
 import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
@@ -6,7 +6,7 @@ import crypto from 'node:crypto'
 import {
   ensureDirForFile,
   printContextSummary,
-  findRepoRoot, // ← общий поиск корня (.git / pnpm-workspace.yaml / top package.json)
+  findRepoRoot,
 } from './cli-utils.js'
 
 /**
@@ -84,11 +84,16 @@ function readBlobs(files: string[]): FileBlob[] {
   return out
 }
 
+/** Relative path pretty-printer (works with custom profilesDir) */
+function rel(p: string, rootHint: string) {
+  const try1 = path.relative(rootHint, p)
+  return try1 && !try1.startsWith('..') ? try1 : path.relative(REPO_ROOT, p)
+}
+
 /** Deterministic TOC for a set of markdown files */
-function buildTOC(blobs: FileBlob[], baseLabel: string): string {
+function buildTOC(blobs: FileBlob[], baseLabel: string, rootHint: string): string {
   if (blobs.length === 0) return ''
-  const rel = (p: string) => p.replace(/^.*?profiles\//, 'profiles/')
-  const items = blobs.map(b => `- ${rel(b.path)}`).join('\n')
+  const items = blobs.map(b => `- ${rel(b.path, rootHint)}`).join('\n')
   return [`### ${baseLabel} TOC`, '', items, ''].join('\n')
 }
 
@@ -108,9 +113,9 @@ function resolveProfilesDir(repoRoot: string, explicit?: string): string {
   ]
   for (const c of candidates) if (fs.existsSync(c)) return c
   throw new Error(
-    `profiles dir not found. Tried:\n` +
+    `profiles dir not found.\nTried:\n` +
     candidates.map(c => ` - ${c}`).join('\n') +
-    `\nYou can pass --profiles-dir or set SENTINEL_PROFILES_DIR.`
+    `\nPass --profiles-dir or set SENTINEL_PROFILES_DIR.`
   )
 }
 
@@ -198,7 +203,7 @@ export function buildContext(opts: BuildContextOptions) {
   parts.push('<!-- SENTINEL:SECTION:HANDBOOK -->')
   parts.push('# Handbook')
   parts.push('')
-  parts.push(buildTOC(hbBlobs, 'Handbook'))
+  parts.push(buildTOC(hbBlobs, 'Handbook', PROFILES_DIR))
   for (const blob of hbBlobs) {
     parts.push(`## ${path.basename(blob.path)}`)
     parts.push('')
@@ -234,7 +239,7 @@ export function buildContext(opts: BuildContextOptions) {
     parts.push('<!-- SENTINEL:SECTION:ADR -->')
     parts.push('# ADR')
     parts.push('')
-    parts.push(buildTOC(adrBlobs, 'ADR'))
+    parts.push(buildTOC(adrBlobs, 'ADR', PROFILES_DIR))
     for (const blob of adrBlobs) {
       parts.push(`## ${path.basename(blob.path)}`)
       parts.push('')
@@ -312,7 +317,7 @@ export async function buildContextCLI(opts: {
   const res = buildContext({
     profile: opts.profile,
     profilesDir: opts.profilesDir,
-    outFile: opts.out, // may be undefined → default
+    outFile: opts.out,
     includeADR: opts.includeADR ?? true,
     includeBoundaries: opts.includeBoundaries ?? true,
     maxBytes: opts.maxBytes ?? 1_500_000,

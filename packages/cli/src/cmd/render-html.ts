@@ -1,7 +1,5 @@
-// packages/cli/src/cmd/render-html.ts
 import fs from 'node:fs'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
 import type { ReviewJson } from '@sentinel/core'
 import { renderMarkdownFromJson } from './render-md.js'
 import {
@@ -10,11 +8,12 @@ import {
   printRenderSummaryHtml,
 } from '../cli-utils.js'
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const REPO_ROOT = findRepoRoot(path.resolve(__dirname))
+const REPO_ROOT = findRepoRoot()
 
-/** very small Markdown → HTML (headings, lists, hr, p, inline/code fences) */
+/** tiny Markdown → HTML */
 function mdToHtml(md: string) {
+  md = md.replace(/\r\n?/g, '\n')
+
   const escape = (s: string) =>
     s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 
@@ -38,7 +37,7 @@ function mdToHtml(md: string) {
   }
 
   for (const l of lines) {
-    // fenced code blocks ```
+    // fenced code blocks
     const fence = l.match(/^```(.*)$/)
     if (fence) {
       if (!inCode) {
@@ -72,6 +71,11 @@ function mdToHtml(md: string) {
     if (/^##\s+/.test(l)) {
       flushList()
       out.push(`<h2>${escape(l.replace(/^##\s+/, ''))}</h2>`)
+      continue
+    }
+    if (/^###\s+/.test(l)) {
+      flushList()
+      out.push(`<h3>${escape(l.replace(/^###\s+/, ''))}</h3>`)
       continue
     }
 
@@ -116,6 +120,7 @@ function wrapHtml(title: string, md: string) {
        max-width:900px;margin:32px auto;padding:0 16px}
   h1{font-size:22px;margin:.6em 0}
   h2{font-size:18px;margin:1.2em 0 .4em}
+  h3{font-size:16px;margin:1em 0 .4em}
   ul{margin:.3em 0 1em 1.2em;padding:0}
   li{margin:.25em 0}
   code{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;

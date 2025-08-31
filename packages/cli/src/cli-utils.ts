@@ -1,4 +1,3 @@
-// packages/cli/src/cli-utils.ts
 import fs from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -25,6 +24,28 @@ export const formatBytes = (n: number) =>
   n < 1024 ? `${n} B`
   : n < 1024 * 1024 ? `${(n / 1024).toFixed(1)} KB`
   : `${(n / 1024 / 1024).toFixed(2)} MB`
+
+/** Safe JSON helpers */
+export function readJsonSync<T = unknown>(file: string): T {
+  const raw = fs.readFileSync(file, 'utf8')
+  return JSON.parse(raw) as T
+}
+export function writeJsonSync(file: string, data: unknown) {
+  ensureDirForFile(file)
+  fs.writeFileSync(file, JSON.stringify(data, null, 2), 'utf8')
+}
+
+/** Assert a file exists (throws a clear error) */
+export function assertFileExists(absPath: string, label = 'file') {
+  if (!fs.existsSync(absPath)) {
+    throw new Error(`[sentinel] ${label} not found at ${absPath}`)
+  }
+}
+
+/** Pretty rel + file link for logs */
+export function prettyRelLink(repoRoot: string, absPath: string) {
+  return `${dim(path.relative(repoRoot, absPath))} ${cyan('→')} ${dim(linkifyFile(absPath))}`
+}
 
 /** ────────────────────────────────────────────────────────────────────────────
  *  Repo root detection (stable for monorepos)
@@ -222,7 +243,6 @@ export function printInitSummary(args: {
   }
 }
 
-/** Print "Next steps" block for init-profile */
 export function printInitNextSteps(args: {
   repoRoot: string
   profile: string
