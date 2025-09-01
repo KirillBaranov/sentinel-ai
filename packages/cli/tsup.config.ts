@@ -14,6 +14,7 @@ export default defineConfig({
     '@sentinel/provider-types',
     '@sentinel/provider-mock',
     '@sentinel/provider-local',
+    '@sentinel/analytics',
     'commander',
     'colorette'
   ],

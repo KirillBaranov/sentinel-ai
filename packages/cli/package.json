@@ -23,6 +23,7 @@
     "@sentinel/provider-types": "workspace:*",
     "@sentinel/provider-mock": "workspace:*",
     "@sentinel/provider-local": "workspace:*",
+    "@sentinel/analytics": "workspace:*",
     "commander": "^12.1.0",
     "colorette": "^2.0.20"
   },

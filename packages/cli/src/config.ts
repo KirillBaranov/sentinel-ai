@@ -38,6 +38,12 @@ export interface SentinelRc {
     maxBytes?: number
     maxApproxTokens?: number
   }
+
+  analytics?: {
+    enabled?: boolean;
+    outDir?: string;
+    salt?: string;
+  };
 }
 
 /** shallow merge (src overrides dst) */

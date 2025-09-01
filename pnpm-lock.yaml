@@ -76,8 +76,27 @@ importers:
         specifier: ^2.1.4
         version: 2.1.9(@types/node@20.19.11)
 
+  packages/analytics:
+    dependencies:
+      '@sentinel/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      rimraf:
+        specifier: ^6.0.1
+        version: 6.0.1
+      tsup:
+        specifier: ^8.5.0
+        version: 8.5.0(postcss@8.5.6)(tsx@4.20.5)(typescript@5.9.2)(yaml@2.8.1)
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.2
+
   packages/cli:
     dependencies:
+      '@sentinel/analytics':
+        specifier: workspace:*
+        version: link:../analytics
       '@sentinel/core':
         specifier: workspace:*
         version: link:../core

@@ -21,7 +21,7 @@ import {
   renderMarkdown,
 } from '@sentinel/core'
 
-// Local type definition for ReviewJson
+// Local type definition for ReviewJson (чтобы не тянуть типы из core прямо сюда)
 interface ReviewJson {
   ai_review: {
     version: 1
@@ -118,9 +118,10 @@ program
   .option('--out-json <path>', 'canonical review JSON')
   .option('--fail-on <level>', 'none|major|critical (exit policy)')
   .option('--max-comments <n>', 'cap number of findings')
+  .option('--analytics', 'enable analytics (file JSONL sink)', false)
+  .option('--analytics-out <dir>', 'analytics output dir (default: <repo>/dist/analytics)')
   .option('--debug', 'verbose debug logs', false)
   .action(async (opts) => {
-    // Конфиг c учётом CLI-override'ов (не передаём undefined полей)
     const outputOverrides: Record<string, string> = {}
     if (typeof opts.outMd === 'string') outputOverrides.mdName = opts.outMd
     if (typeof opts.outJson === 'string') outputOverrides.jsonName = opts.outJson
@@ -160,9 +161,10 @@ program
         })(),
         failOn: cfg.failOn as any,
         maxComments: cfg.maxComments,
+        analytics: !!opts.analytics || process.env.SENTINEL_ANALYTICS === '1',
+        analyticsOut: opts.analyticsOut || process.env.SENTINEL_ANALYTICS_DIR,
         debug: !!opts.debug,
       })
-      // runReviewCLI печатает сводку и сам выставляет exit code
     } catch (e: any) {
       if (/Profile .* not found/.test(String(e?.message))) {
         fail(e.message)
@@ -265,7 +267,7 @@ program
 
 program.addHelpText('afterAll', `
 ${dim('Config sources (priority high→low):')} CLI ${bold('>')} ENV ${bold('>')} .sentinelrc.json ${bold('>')} defaults
-ENV vars: SENTINEL_PROFILE, SENTINEL_PROFILES_DIR, SENTINEL_PROVIDER, SENTINEL_OUT_DIR, SENTINEL_OUT_MD, SENTINEL_OUT_JSON, SENTINEL_FAIL_ON, SENTINEL_MAX_COMMENTS, SENTINEL_DEBUG
+ENV vars: SENTINEL_PROFILE, SENTINEL_PROFILES_DIR, SENTINEL_PROVIDER, SENTINEL_OUT_DIR, SENTINEL_OUT_MD, SENTINEL_OUT_JSON, SENTINEL_FAIL_ON, SENTINEL_MAX_COMMENTS, SENTINEL_DEBUG, SENTINEL_ANALYTICS, SENTINEL_ANALYTICS_DIR, SENTINEL_ANALYTICS_SALT
 Repo root: ${dim(REPO_ROOT)}
 `)
 

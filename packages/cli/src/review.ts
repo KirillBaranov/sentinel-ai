@@ -1,5 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import crypto from 'node:crypto'
 
 import type {
   ReviewJson,
@@ -19,6 +20,14 @@ import {
   sevRank,
   findRepoRoot,
 } from './cli-utils'
+
+// analytics (MVP file sink)
+import {
+  initAnalytics,
+  trackRunStarted,
+  trackFinding,
+  trackRunFinished,
+} from '@sentinel/analytics'
 
 // ────────────────────────────────────────────────────────────────────────────────
 // Repo root
@@ -90,6 +99,8 @@ export async function runReviewCLI(opts: {
   provider?: string
   failOn?: 'none' | 'major' | 'critical'
   maxComments?: number
+  analytics?: boolean
+  analyticsOut?: string
   debug?: boolean
 }) {
   const provider = pickProvider(opts.provider)
@@ -123,8 +134,28 @@ export async function runReviewCLI(opts: {
       profile: opts.profile,
       hasRules: !!rulesRaw,
       hasBoundaries: !!boundaries,
+      analytics: !!opts.analytics,
+      analyticsOut: opts.analyticsOut,
     })
   }
+
+  // ── Analytics: init + run.started (единый runId, одна инициализация)
+  const runId = crypto.randomUUID?.() ?? `run_${Date.now()}`
+  initAnalytics(
+    {
+      enabled: !!opts.analytics || process.env.SENTINEL_ANALYTICS === '1' || process.env.SENTINEL_ANALYTICS === 'true',
+      fileDir: opts.analyticsOut || process.env.SENTINEL_ANALYTICS_DIR,
+      salt: process.env.SENTINEL_ANALYTICS_SALT,
+    },
+    REPO_ROOT
+  )
+  await trackRunStarted({
+    run_id: runId,
+    provider: provider.name || 'local',
+    profile: opts.profile,
+  })
+
+  const startedAt = Date.now()
 
   // Всегда через адаптер
   const review: ReviewJson = await provider.review({
@@ -133,6 +164,9 @@ export async function runReviewCLI(opts: {
     rules: rulesRaw,
     boundaries,
   })
+
+  // Канонизируем наш runId
+  review.ai_review.run_id = runId
 
   // cap findings if requested
   const envCapRaw = process.env.SENTINEL_MAX_COMMENTS
@@ -160,7 +194,7 @@ export async function runReviewCLI(opts: {
   fs.writeFileSync(outMdPath, mdPayload, 'utf8')
 
   // summary + exit
-  const findings = review.ai_review.findings as unknown as { severity: Severity }[]
+  const findings = review.ai_review.findings as unknown as { severity: Severity; rule: string; file?: string; locator?: string }[]
   const top = maxSeverity(findings)
 
   let exit: { mode: 'legacy' | 'threshold' | 'none'; exitCode: number; threshold?: Severity; top?: Severity | null }
@@ -183,6 +217,31 @@ export async function runReviewCLI(opts: {
     outMdPath,
     findings,
     exit,
+  })
+
+  // ── Analytics: finding.reported + run.finished (везде runId; ждём запись)
+  const counts: Record<Severity, number> = { critical: 0, major: 0, minor: 0, info: 0 }
+  for (const f of findings) {
+    counts[f.severity] = (counts[f.severity] ?? 0) + 1
+    const fileAbs =
+      f.file && path.isAbsolute(f.file) ? f.file
+      : f.file ? path.join(REPO_ROOT, f.file)
+      : undefined
+    await trackFinding({
+      run_id: runId,            // ← только наш runId
+      rule_id: f.rule,
+      severity: f.severity,
+      file: fileAbs,            // ← SDK сам хеширует (если передан salt)
+      locator: f.locator,
+    })
+  }
+
+  await trackRunFinished({
+    run_id: runId,              // ← тот же runId
+    duration_ms: Date.now() - startedAt,
+    findings_total: findings.length,
+    findings_by_severity: counts,
+    ok: exit.exitCode === 0,
   })
 
   process.exit(exit.exitCode)
