@@ -1,13 +1,11 @@
 import type { ReviewProvider, ProviderReviewInput } from '@sentinel/provider-types'
 import type { ReviewJson, ReviewFinding, Severity } from '@sentinel/core'
 
-// Mock provider - простая заглушка, которая возвращает 1–2 фиктивных замечания
 export const mockProvider: ReviewProvider = {
   name: 'mock',
   async review(input: ProviderReviewInput): Promise<ReviewJson> {
     const findings = []
 
-    // примитивные сигналы, чтобы было видно, что провайдер «работает»
     if (/TODO/i.test(input.diffText)) {
       findings.push({
         rule: 'style.no-todo-comment',

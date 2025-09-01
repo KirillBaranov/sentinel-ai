@@ -1,12 +1,10 @@
 {
-  "extends": "../../tsconfig.base.json",
+  "extends": "./tsconfig.json",
   "compilerOptions": {
+    "emitDeclarationOnly": true,
     "declaration": true,
     "declarationMap": true,
-    "emitDeclarationOnly": true,
-    "outDir": "dist",
-    "module": "ESNext",
-    "moduleResolution": "Bundler"
+    "skipLibCheck": true
   },
-  "include": ["src"]
+  "exclude": ["**/__tests__/**", "**/*.spec.ts"]
 }

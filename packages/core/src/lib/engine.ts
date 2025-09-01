@@ -1,6 +1,6 @@
 import { parseUnifiedDiff } from './diff.js'
-import { makeFingerprint, type ReviewFinding } from './normalize.js'
-import type { RulesJson, RuleItem } from './types.js'
+import { makeFingerprint } from './normalize'
+import type { RulesJson, RuleItem, ReviewFinding } from './types.js'
 import type { BoundariesConfig } from './boundaries.js'
 import { extractImportSpecifier, checkForbidden, toPosix } from './boundaries.js'
 

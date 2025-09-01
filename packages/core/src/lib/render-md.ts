@@ -1,5 +1,4 @@
-import type { ReviewFinding } from './normalize.js';
-import type { Severity } from './types.js';
+import type { Severity, ReviewFinding } from './types';
 import { DEFAULT_SEVERITY_MAP, type RenderOptions } from './render-config';
 
 type Grouped = Record<Severity, ReviewFinding[]>;

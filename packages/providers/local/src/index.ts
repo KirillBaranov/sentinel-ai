@@ -1,5 +1,5 @@
 import type { ReviewJson, BoundariesConfig } from '@sentinel/core'
-import type { ReviewProvider, ProviderReviewInput } from '../../types/dist/src'
+import type { ReviewProvider, ProviderReviewInput } from '@sentinel/provider-types'
 import { analyzeDiff } from '@sentinel/core'
 
 export { analyzeDiff }

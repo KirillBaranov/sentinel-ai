@@ -2,6 +2,6 @@ export * from './lib/normalize';
 export * from './lib/render-config'
 export * from './lib/render-md'
 export * from './lib/diff'
-export * from './lib/types'
+export * from './lib/types.js'
 export * from './lib/boundaries'
 export * from './lib/engine'

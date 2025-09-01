@@ -8,7 +8,7 @@ import type {
   Severity,
 } from '@sentinel/core'
 
-import type { ReviewProvider } from '../../providers/types/dist/src/index.js'
+import type { ReviewProvider } from '@sentinel/provider-types'
 import { mockProvider } from '@sentinel/provider-mock'
 import { localProvider } from '@sentinel/provider-local'
 

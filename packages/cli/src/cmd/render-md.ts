@@ -28,7 +28,7 @@ function groupBy<T, K extends string>(arr: T[], by: (x: T) => K) {
 
 function renderSection(sev: Sev, items: ReviewFinding[]) {
   const icon = ICON[sev]
-  const title = sev[0].toUpperCase() + sev.slice(1)
+  const title = sev?.[0]?.toUpperCase() + sev?.slice(1)
 
   if (!items || items.length === 0) {
     return `## ${icon} ${title}\n- ✅ No issues found\n`
@@ -41,7 +41,7 @@ function renderSection(sev: Sev, items: ReviewFinding[]) {
   const chunks: string[] = [`## ${icon} ${title}`]
   for (const area of areas) {
     chunks.push(`- **${area}**`)
-    for (const f of byArea[area]) {
+    for (const f of byArea?.[area] ?? []) {
       const loc = f.locator ? ` ${f.locator}` : ''
       const lines: string[] = [
         `  - **${f.rule}** in \`${f.file}\`${loc}`,

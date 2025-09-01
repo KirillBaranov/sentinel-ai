@@ -1,5 +1,3 @@
-import type { ReviewFinding } from './normalize.js'
-
 export interface Hunk {
   oldStart: number
   oldLines: number
@@ -98,5 +96,3 @@ export function parseUnifiedDiff(diff: string): FileDiff[] {
 export function hunkLocator(h: Hunk): string {
   return `HUNK:@@ -${h.oldStart},${h.oldLines} +${h.newStart},${h.newLines} @@`
 }
-
-export type { ReviewFinding }

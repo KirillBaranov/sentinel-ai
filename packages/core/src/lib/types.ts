@@ -18,9 +18,42 @@ export interface RuleItem {
   ask_feedback?: boolean
 }
 
+export interface ReviewFinding {
+  rule: string
+  area: string
+  severity: Severity
+  file: string
+  /**
+   * Locator priority: HUNK:@@ ... @@ | Lnum | Lstart-Lend | symbol:Name
+   */
+  locator: string
+  /**
+   * Каждая строка начинается с локатора:
+   * [L45-L53] message
+   * [HUNK:@@ -12,7 +12,9 @@] message
+   * [symbol:FooBar] message
+   */
+  finding: string[]
+  why: string
+  suggestion: string
+  /**
+   * Stable identifier for the finding:
+   * sha1(rule + '\n' + file + '\n' + locator + '\n' + firstFinding)
+   */
+  fingerprint: string
+}
+
 export interface RulesJson {
   version: number
   domain: string
   metadata?: Record<string, unknown>
   rules: RuleItem[]
+}
+
+export interface ReviewJson {
+  ai_review: {
+    version: 1
+    run_id: string
+    findings: ReviewFinding[]
+  }
 }
