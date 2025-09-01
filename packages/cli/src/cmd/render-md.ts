@@ -5,7 +5,7 @@ import {
   findRepoRoot,
   ensureDirForFile,
   printRenderSummaryMarkdown,
-} from '../cli-utils.js'
+} from '../cli-utils'
 
 const REPO_ROOT = findRepoRoot()
 

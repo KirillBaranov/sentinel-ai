@@ -1,7 +1,7 @@
 
 import fs from 'node:fs'
 import path from 'node:path'
-import { findRepoRoot } from './cli-utils.js'
+import { findRepoRoot } from './cli-utils'
 
 export type FailOn = 'major' | 'critical'
 export type ProviderName = 'local' | 'mock' | 'openai' | 'claude'

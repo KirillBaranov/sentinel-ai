@@ -17,8 +17,8 @@ import {
   printReviewSummary,
   maxSeverity,
   sevRank,
-  findRepoRoot, // общий поиск корня репо (.git / pnpm-workspace.yaml / top package.json)
-} from './cli-utils.js'
+  findRepoRoot,
+} from './cli-utils'
 
 // ────────────────────────────────────────────────────────────────────────────────
 // Repo root

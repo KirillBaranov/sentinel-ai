@@ -10,6 +10,12 @@ import { initProfileCLI } from './cmd/init-profile'
 import { loadConfig } from './config'
 
 import {
+  findRepoRoot,
+  fail,
+  printRenderSummaryMarkdown,
+} from './cli-utils'
+
+import {
   type RenderOptions,
   type SeverityMap,
   renderMarkdown,
@@ -33,12 +39,6 @@ interface ReviewJson {
     }>
   }
 }
-
-import {
-  findRepoRoot,
-  fail,
-  printRenderSummaryMarkdown,
-} from './cli-utils.js'
 
 // ────────────────────────────────────────────────────────────────────────────────
 // Repo root (.git | pnpm-workspace.yaml | fallback)

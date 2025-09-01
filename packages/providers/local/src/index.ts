@@ -2,8 +2,6 @@ import type { ReviewJson, BoundariesConfig } from '@sentinel/core'
 import type { ReviewProvider, ProviderReviewInput } from '@sentinel/provider-types'
 import { analyzeDiff } from '@sentinel/core'
 
-export { analyzeDiff }
-
 export const localProvider: ReviewProvider = {
   name: 'local',
   async review(input: ProviderReviewInput): Promise<ReviewJson> {

@@ -1,12 +1,12 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import type { ReviewJson } from '@sentinel/core'
-import { renderMarkdownFromJson } from './render-md.js'
+import { renderMarkdownFromJson } from './render-md'
 import {
   findRepoRoot,
   ensureDirForFile,
   printRenderSummaryHtml,
-} from '../cli-utils.js'
+} from '../cli-utils'
 
 const REPO_ROOT = findRepoRoot()
 

@@ -1,11 +1,10 @@
-// packages/cli/src/cmd/init-profile.ts
 import fs from 'node:fs'
 import path from 'node:path'
 import {
   findRepoRoot,
   printInitSummary,
   printInitNextSteps,
-} from '../cli-utils.js'
+} from '../cli-utils'
 
 const REPO_ROOT = findRepoRoot()
 

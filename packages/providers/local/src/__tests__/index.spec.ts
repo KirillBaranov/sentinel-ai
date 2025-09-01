@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { localProvider } from '../../index.js'
+import { localProvider } from '../index'
 import type { BoundariesConfig } from '@sentinel/core'
 import type { RulesJson } from '@sentinel/core'
 

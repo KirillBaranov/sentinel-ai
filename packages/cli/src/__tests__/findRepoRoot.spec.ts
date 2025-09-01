@@ -1,7 +1,8 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
-import { findRepoRoot } from '../cli-utils.js'
+import { findRepoRoot } from '../cli-utils'
+import { describe, it, expect } from 'vitest'
 
 function mkdirp(p: string) { fs.mkdirSync(p, { recursive: true }) }
 

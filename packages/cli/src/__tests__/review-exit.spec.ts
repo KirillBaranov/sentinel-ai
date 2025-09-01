@@ -1,4 +1,4 @@
-import { sevRank, maxSeverity } from '../cli-utils.js'
+import { sevRank, maxSeverity } from '../cli-utils'
 import { it } from 'vitest'
 import { expect } from 'vitest'
 

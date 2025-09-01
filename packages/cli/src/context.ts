@@ -7,7 +7,7 @@ import {
   ensureDirForFile,
   printContextSummary,
   findRepoRoot,
-} from './cli-utils.js'
+} from './cli-utils'
 
 /**
  * Build AI context (Markdown) from profile docs:

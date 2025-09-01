@@ -1,8 +1,8 @@
-import { parseUnifiedDiff } from './diff.js'
+import { parseUnifiedDiff } from './diff'
 import { makeFingerprint } from './normalize'
-import type { RulesJson, RuleItem, ReviewFinding } from './types.js'
-import type { BoundariesConfig } from './boundaries.js'
-import { extractImportSpecifier, checkForbidden, toPosix } from './boundaries.js'
+import type { RulesJson, RuleItem, ReviewFinding } from './types'
+import type { BoundariesConfig } from './boundaries'
+import { extractImportSpecifier, checkForbidden, toPosix } from './boundaries'
 
 export type EngineInput = {
   diffText: string
