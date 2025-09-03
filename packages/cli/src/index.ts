@@ -1,224 +1,230 @@
-import fs from 'node:fs'
-import path from 'node:path'
-import { Command } from 'commander'
-import { bold, dim } from 'colorette'
+// packages/cli/src/index.ts
+import fs from "node:fs";
+import path from "node:path";
+import { Command } from "commander";
+import { bold, dim } from "colorette";
 
-import { buildContextCLI } from './context'
-import { runReviewCLI } from './review'
-import { renderHtmlCLI } from './cmd/render-html'
-import { initProfileCLI } from './cmd/init-profile'
-import { loadConfig } from './config'
+import { buildContextCLI } from "./context";
+import { runReviewCLI } from "./review";
+import { renderHtmlCLI } from "./cmd/render-html";
+import { initProfileCLI } from "./cmd/init-profile";
+import { loadConfig } from "./config";
+import { normalizeSeverityMap } from './config/severity-normalize'
 
 import {
   findRepoRoot,
   fail,
   printRenderSummaryMarkdown,
-} from './cli-utils'
-
-export { ensureDirForFile } from "./cli-utils"
+} from "./cli-utils";
 
 import {
   type RenderOptions,
-  type SeverityMap,
   renderMarkdown,
-} from '@sentinel/core'
-import { registerAnalyticsCommands } from './cmd/analytics'
+} from "@sentinel/core";
 
-// Local type definition for ReviewJson (чтобы не тянуть типы из core прямо сюда)
-interface ReviewJson {
-  ai_review: {
-    version: 1
-    run_id: string
-    findings: Array<{
-      rule: string
-      area: string
-      severity: 'critical' | 'major' | 'minor' | 'info'
-      file: string
-      locator: string
-      finding: string[]
-      why: string
-      suggestion: string
-      fingerprint: string
-    }>
-  }
-}
+import { registerAnalyticsCommands } from "./cmd/analytics";
 
 // ────────────────────────────────────────────────────────────────────────────────
 // Repo root (.git | pnpm-workspace.yaml | fallback)
 // ────────────────────────────────────────────────────────────────────────────────
-const REPO_ROOT = findRepoRoot()
+const REPO_ROOT = findRepoRoot();
 
-// ────────────────────────────────────────────────────────────────────────────────
-// Helpers
-// ────────────────────────────────────────────────────────────────────────────────
-function hintProfileResolution(profile: string, profilesDir?: string) {
-  const candidates = [
-    '`profiles/<name>`',
-    '`packages/profiles/<name>`',
-    profilesDir ? `\`${profilesDir}/${profile}\`` : null,
-  ].filter(Boolean).join(', ')
-  return `Profile "${profile}" not found. Looked in: ${candidates}.
-Try: ${bold('sentinel init-profile --name ' + profile)} or pass ${bold('--profiles-dir')} to override root.`
+// Узкий локальный тип для чтения review.json (не тянем типы из core сюда)
+interface ReviewJson {
+  ai_review: {
+    version: 1;
+    run_id: string;
+    findings: Array<{
+      rule: string;
+      area: string;
+      severity: "critical" | "major" | "minor" | "info";
+      file: string;
+      locator: string;
+      finding: string[];
+      why: string;
+      suggestion: string;
+      fingerprint: string;
+    }>;
+  };
 }
 
 // ────────────────────────────────────────────────────────────────────────────────
 const program = new Command()
-  .name('sentinel')
-  .description(`${bold('Sentinel AI CLI')} — code review with profiles & providers`)
-  .version('0.1.0')
+  .name("sentinel")
+  .description(`${bold("Sentinel AI CLI")} — code review with profiles, providers & analytics`)
+  .version("0.1.0");
 
-program.showHelpAfterError()
-program.showSuggestionAfterError()
+program.showHelpAfterError();
+program.showSuggestionAfterError();
 
+// ────────────────────────────────────────────────────────────────────────────────
 // build-context
+// ────────────────────────────────────────────────────────────────────────────────
 program
-  .command('build-context')
-  .description('Build AI review context (handbook + rules + ADR) into dist/ai-review-context.md')
-  .option('-p, --profile <profile>', 'profile name')
-  .option('--profiles-dir <dir>', 'override profiles root')
-  .option('-o, --out <path>', 'output file (repo-root relative)')
+  .command("build-context")
+  .description("Build AI review context (handbook + rules + ADR) into out/context/<profile>.md")
+  .option("-p, --profile <profile>", "profile name")
+  .option("--profiles-dir <dir>", "override profiles root")
+  .option("-o, --out <file>", "override output file (abs or repo-root relative)")
   .action(async (opts) => {
     try {
-      // CLI → overrides; остальное подтащим из RC/ENV/Defaults
-      const cfg = loadConfig({
-        defaultProfile: opts.profile,
+      const rc = loadConfig({
+        profile: opts.profile,
         profilesDir: opts.profilesDir,
-      })
+      });
+
+      // по умолчанию пишем в <out.rootAbs>/<contextDir>/<profile>.md
+      const defaultOut = path.join(rc.out.contextDirAbs, `${rc.profile}.md`);
+      const outFile = opts.out
+        ? (path.isAbsolute(opts.out) ? opts.out : path.join(REPO_ROOT, opts.out))
+        : defaultOut;
 
       await buildContextCLI({
-        profile: cfg.defaultProfile!,
-        profilesDir: cfg.profilesDir,
-        out: opts.out
-          ? (path.isAbsolute(opts.out) ? opts.out : path.join(REPO_ROOT, opts.out))
-          : undefined,
-        includeADR: cfg.context?.includeADR,
-        includeBoundaries: cfg.context?.includeBoundaries,
-        maxBytes: cfg.context?.maxBytes,
-        maxApproxTokens: cfg.context?.maxApproxTokens,
-      } as any)
-      // buildContextCLI печатает сводку сам
+        profile: rc.profile,
+        profilesDir: rc.profilesDir,
+        out: outFile,
+        includeADR: rc.context.includeADR,
+        includeBoundaries: rc.context.includeBoundaries,
+        maxBytes: rc.context.maxBytes,
+        maxApproxTokens: rc.context.maxApproxTokens,
+      } as any);
+      // buildContextCLI печатает summary сам
     } catch (e: any) {
       if (/not found: .+rules\.json/.test(String(e?.message))) {
-        fail(e.message)
-        const cfg = loadConfig({ defaultProfile: opts.profile, profilesDir: opts.profilesDir })
-        console.log('\n' + hintProfileResolution(cfg.defaultProfile!, cfg.profilesDir))
+        fail(e.message);
+        const tmp = loadConfig({ profile: opts.profile, profilesDir: opts.profilesDir });
+        const candidates =
+          [
+            "`profiles/<name>`",
+            "`packages/profiles/<name>`",
+            tmp.profilesDir && `\`${tmp.profilesDir}/${tmp.profile}\``,
+          ]
+            .filter(Boolean)
+            .join(", ");
+        console.log(
+          "\n" +
+            `Profile "${tmp.profile}" not found. Looked in: ${candidates}.\n` +
+            `Try: ${bold("sentinel init-profile --name " + tmp.profile)} or pass ${bold("--profiles-dir")} to override root.`
+        );
       } else {
-        fail(String(e?.stack || e))
+        fail(String(e?.stack || e));
       }
-      process.exit(1)
+      process.exit(1);
     }
-  })
+  });
 
+// ────────────────────────────────────────────────────────────────────────────────
 // review
+// ────────────────────────────────────────────────────────────────────────────────
 program
-  .command('review')
-  .description('Run review (local/mock/openai), write JSON and transport Markdown with JSON block')
-  .requiredOption('-d, --diff <path>', 'unified diff file')
-  .option('-p, --profile <profile>', 'profile name')
-  .option('--profiles-dir <dir>', 'override profiles root')
-  .option('--provider <name>', 'provider: local|mock|openai')
-  .option('--out-md <path>', 'transport Markdown (.md) with fenced JSON')
-  .option('--out-json <path>', 'canonical review JSON')
-  .option('--fail-on <level>', 'none|major|critical (exit policy)')
-  .option('--max-comments <n>', 'cap number of findings')
-  // без дефолта: отличаем "флаг не передан" от "false"
-  .option('--analytics', 'enable analytics (file JSONL sink)')
-  .option('--analytics-out <dir>', 'analytics output dir (overrides rc; default from rc or .sentinel/analytics)')
-  .option('--debug', 'verbose debug logs', false)
+  .command("review")
+  .description("Run review (local/mock/openai), write JSON and Markdown transport")
+  .requiredOption("-d, --diff <path>", "unified diff file")
+  .option("-p, --profile <profile>", "profile name")
+  .option("--profiles-dir <dir>", "override profiles root")
+  .option("--provider <name>", "provider: local|mock|openai|claude")
+  .option("--fail-on <level>", "none|major|critical (exit policy)")
+  .option("--max-comments <n>", "cap number of findings")
+  .option("--analytics", "enable analytics (file JSONL sink)")
+  .option("--analytics-out <dir>", "analytics output dir (overrides rc.analytics.outDir)")
+  .option("--debug", "verbose debug logs", false)
   .action(async (opts: any) => {
-    const outputOverrides: Record<string, string> = {}
-    if (typeof opts.outMd === 'string') outputOverrides.mdName = opts.outMd
-    if (typeof opts.outJson === 'string') outputOverrides.jsonName = opts.outJson
-
-    // безопасный парс max-comments
     const parsedMax =
-      typeof opts.maxComments === 'string' ? Number(opts.maxComments) : opts.maxComments
-    const maxComments =
-      Number.isFinite(parsedMax as number) ? (parsedMax as number) : undefined
+      typeof opts.maxComments === "string" ? Number(opts.maxComments) : opts.maxComments;
+    const maxComments = Number.isFinite(parsedMax as number)
+      ? (parsedMax as number)
+      : undefined;
 
-    // грузим rc (+ env) и даём CLI переопределить только явно переданные поля
     const rc = loadConfig({
-      defaultProfile: opts.profile,
+      profile: opts.profile,
       profilesDir: opts.profilesDir,
       provider: opts.provider,
       failOn: opts.failOn,
       maxComments,
-      output: Object.keys(outputOverrides).length ? outputOverrides : undefined,
-    })
+      // остальные поля из файла rc / env
+    });
 
-    const diff = opts.diff as string
+    const diff = opts.diff as string;
     if (!diff) {
-      fail('Missing --diff <path>')
-      console.log(dim('Example: sentinel review --diff ../../fixtures/changes.diff'))
-      process.exit(2)
+      fail("Missing --diff <path>");
+      console.log(dim("Example: sentinel review --diff ../../fixtures/changes.diff"));
+      process.exit(2);
     }
 
     try {
-      const diffPath = path.isAbsolute(diff) ? diff : path.join(REPO_ROOT, diff)
+      const diffPath = path.isAbsolute(diff) ? diff : path.join(REPO_ROOT, diff);
 
-      // приоритеты:
-      // enabled: CLI (--analytics) > rc.analytics.enabled > ENV(SENTINEL_ANALYTICS)
+      // директория профиля для артефактов ревью
+      const reviewDirAbs = path.join(rc.out.reviewsDirAbs, rc.profile);
+      fs.mkdirSync(reviewDirAbs, { recursive: true });
+
+      const outJson = path.join(reviewDirAbs, rc.out.jsonName);
+      const outMd = path.join(reviewDirAbs, rc.out.mdName);
+
+      // приоритеты аналитики:
+      // enabled: CLI (--analytics) > rc.analytics.enabled > ENV
       const analyticsEnabled =
-        typeof opts.analytics === 'boolean'
+        typeof opts.analytics === "boolean"
           ? opts.analytics
-          : !!rc.analytics?.enabled ||
-            process.env.SENTINEL_ANALYTICS === '1' ||
-            process.env.SENTINEL_ANALYTICS === 'true'
+          : rc.analytics.enabled ||
+            process.env.SENTINEL_ANALYTICS === "1" ||
+            process.env.SENTINEL_ANALYTICS === "true";
 
-      // out: CLI (--analytics-out) > rc.analytics.outDir > ENV
-      const analyticsOut =
-        (typeof opts.analyticsOut === 'string' && opts.analyticsOut) ||
-        rc.analytics?.outDir ||
-        process.env.SENTINEL_ANALYTICS_DIR
+      // out: CLI (--analytics-out) > rc.analytics.outDir (в rc уже абсолютный)
+      const analyticsOut: string | undefined =
+        (typeof opts.analyticsOut === "string" && opts.analyticsOut
+          ? (path.isAbsolute(opts.analyticsOut)
+              ? opts.analyticsOut
+              : path.join(REPO_ROOT, opts.analyticsOut))
+          : rc.analytics.outDir) || undefined;
 
       await runReviewCLI({
         diff: diffPath,
-        profile: rc.defaultProfile!,
+        profile: rc.profile,
         profilesDir: rc.profilesDir,
         provider: rc.provider,
-        outMd: (() => {
-          const name = rc.output?.mdName ?? 'review.md'
-          return path.isAbsolute(name)
-            ? name
-            : path.join(rc.output?.dir ?? REPO_ROOT, name)
-        })(),
-        outJson: (() => {
-          const name = rc.output?.jsonName ?? 'review.json'
-          return path.isAbsolute(name)
-            ? name
-            : path.join(rc.output?.dir ?? REPO_ROOT, name)
-        })(),
-        failOn: rc.failOn as any, // 'none' допускаем только из CLI, rc обычно major|critical
+        outMd,
+        outJson,
+        failOn: rc.failOn as any,
         maxComments,
         analytics: analyticsEnabled,
         analyticsOut,
         debug: !!opts.debug,
-        rc, // ⬅️ пробрасываем целиком для рантайма аналитики
-      })
+        rc, // пробрасываем целиком (рантайм аналитики читает, если нужно)
+      });
     } catch (e: any) {
       if (/Profile .* not found/.test(String(e?.message))) {
-        fail(e.message)
+        fail(e.message);
+        const tmp = loadConfig({ profile: opts.profile });
+        const candidates =
+          [
+            "`profiles/<name>`",
+            "`packages/profiles/<name>`",
+            opts.profilesDir && `\`${opts.profilesDir}/${tmp.profile}\``,
+          ]
+            .filter(Boolean)
+            .join(", ");
         console.log(
-          '\n' +
-            hintProfileResolution(
-              loadConfig({ defaultProfile: opts.profile }).defaultProfile!,
-              opts.profilesDir
-            )
-        )
+          "\n" +
+            `Profile "${tmp.profile}" not found. Looked in: ${candidates}.\n` +
+            `Try: ${bold("sentinel init-profile --name " + tmp.profile)} or pass ${bold("--profiles-dir")} to override root.`
+        );
       } else {
-        fail(String(e?.stack || e))
+        fail(String(e?.stack || e));
       }
-      process.exit(1)
+      process.exit(1);
     }
-  })
+  });
 
+// ────────────────────────────────────────────────────────────────────────────────
 // render-md
+// ────────────────────────────────────────────────────────────────────────────────
 program
   .command('render-md')
   .description('Render review.json → human-friendly Markdown (with optional template & severity map)')
   .requiredOption('--in <path>', 'input review.json')
   .requiredOption('--out <path>', 'output review.md')
-  .option('--template <path>', 'custom template file')
+  .option('--template <path>', 'custom template file (abs or repo-root relative)')
   .option('--severity-map <path>', 'JSON remap of severity labels')
   .action((opts) => {
     try {
@@ -228,15 +234,29 @@ program
       const raw = JSON.parse(fs.readFileSync(inPath, 'utf8')) as ReviewJson
       const findings = raw.ai_review?.findings ?? []
 
+      const rc = loadConfig()
       const ropts: RenderOptions = {}
+
+      // ── template: CLI > rc
       if (opts.template) {
-        const tpl = path.isAbsolute(opts.template) ? opts.template : path.join(REPO_ROOT, opts.template)
+        const tpl = path.isAbsolute(opts.template)
+          ? opts.template
+          : path.join(REPO_ROOT, opts.template)
         if (fs.existsSync(tpl)) ropts.template = fs.readFileSync(tpl, 'utf8')
+      } else if (rc.render.template && fs.existsSync(rc.render.template)) {
+        ropts.template = fs.readFileSync(rc.render.template, 'utf8')
       }
-      const sevPath = (opts as any)['severityMap'] || opts['severity-map']
-      if (sevPath) {
-        const sp = path.isAbsolute(sevPath) ? sevPath : path.join(REPO_ROOT, sevPath)
-        if (fs.existsSync(sp)) ropts.severityMap = JSON.parse(fs.readFileSync(sp, 'utf8')) as SeverityMap
+
+      // ── severityMap: CLI > rc  (оба случая нормализуем)
+      const sevOptPath = (opts as any)['severityMap'] || opts['severity-map']
+      if (sevOptPath) {
+        const sp = path.isAbsolute(sevOptPath) ? sevOptPath : path.join(REPO_ROOT, sevOptPath)
+        if (fs.existsSync(sp)) {
+          const rawMap = JSON.parse(fs.readFileSync(sp, 'utf8'))
+          ropts.severityMap = normalizeSeverityMap(rawMap)
+        }
+      } else if (rc.render.severityMap) {
+        ropts.severityMap = normalizeSeverityMap(rc.render.severityMap)
       }
 
       const md = renderMarkdown(findings, ropts)
@@ -255,14 +275,41 @@ program
     }
   })
 
-// init-profile
+// ────────────────────────────────────────────────────────────────────────────────
+/** render-html — по умолчанию кладём в <out.reviewsDirAbs>/<profile>/review.html */
+// ────────────────────────────────────────────────────────────────────────────────
 program
-  .command('init-profile')
-  .description('Scaffold a new review profile (handbook + rules + boundaries [+ ADR])')
-  .requiredOption('--name <name>', 'profile name (e.g. frontend)')
-  .option('--out-dir <dir>', 'profiles root (default: packages/profiles)')
-  .option('--force', 'overwrite existing files', false)
-  .option('--with-adr', 'create docs/adr starter file', false)
+  .command("render-html")
+  .description("Render review.json → HTML report")
+  .requiredOption("--in <path>", "input review.json")
+  .option("--out <path>", "output review.html")
+  .action(async (opts) => {
+    try {
+      const rc = loadConfig();
+      const defaultOut = path.join(rc.out.reviewsDirAbs, rc.profile, "review.html");
+
+      const inPath = path.isAbsolute(opts.in) ? opts.in : path.join(REPO_ROOT, opts.in);
+      const outPath = opts.out
+        ? (path.isAbsolute(opts.out) ? opts.out : path.join(REPO_ROOT, opts.out))
+        : defaultOut;
+
+      await renderHtmlCLI({ inFile: inPath, outFile: outPath });
+    } catch (e: any) {
+      fail(String(e?.stack || e));
+      process.exit(1);
+    }
+  });
+
+// ────────────────────────────────────────────────────────────────────────────────
+// init-profile
+// ────────────────────────────────────────────────────────────────────────────────
+program
+  .command("init-profile")
+  .description("Scaffold a new review profile (handbook + rules + boundaries [+ ADR])")
+  .requiredOption("--name <name>", "profile name (e.g. frontend)")
+  .option("--out-dir <dir>", "profiles root (default: packages/profiles)")
+  .option("--force", "overwrite existing files", false)
+  .option("--with-adr", "create docs/adr starter file", false)
   .action(async (opts) => {
     try {
       await initProfileCLI({
@@ -270,40 +317,30 @@ program
         outDir: opts.outDir,
         force: !!opts.force,
         withAdr: !!opts.withAdr,
-      })
-      // initProfileCLI сам печатает summary и next steps
+      });
+      // initProfileCLI печатает summary и next steps сам
     } catch (e: any) {
-      fail(String(e?.stack || e))
-      process.exit(1)
+      fail(String(e?.stack || e));
+      process.exit(1);
     }
-  })
+  });
 
-// render-html
-program
-  .command('render-html')
-  .description('Render review.json → HTML report')
-  .requiredOption('--in <path>', 'input review.json')
-  .option('--out <path>', 'output review.html', 'dist/review.html')
-  .action(async (opts) => {
-    try {
-      const inPath  = path.isAbsolute(opts.in)  ? opts.in  : path.join(REPO_ROOT, opts.in)
-      const outPath = path.isAbsolute(opts.out) ? opts.out : path.join(REPO_ROOT, opts.out)
-      await renderHtmlCLI({ inFile: inPath, outFile: outPath })
-    } catch (e: any) {
-      fail(String(e?.stack || e))
-      process.exit(1)
-    }
-  })
-
-program.addHelpText('afterAll', `
-${dim('Config sources (priority high→low):')} CLI ${bold('>')} ENV ${bold('>')} .sentinelrc.json ${bold('>')} defaults
-ENV vars: SENTINEL_PROFILE, SENTINEL_PROFILES_DIR, SENTINEL_PROVIDER, SENTINEL_OUT_DIR, SENTINEL_OUT_MD, SENTINEL_OUT_JSON, SENTINEL_FAIL_ON, SENTINEL_MAX_COMMENTS, SENTINEL_DEBUG, SENTINEL_ANALYTICS, SENTINEL_ANALYTICS_DIR, SENTINEL_ANALYTICS_SALT
-Repo root: ${dim(REPO_ROOT)}
-`)
-
+// ────────────────────────────────────────────────────────────────────────────────
+// analytics (подкоманды подтягиваются из пакета @sentinel/analytics)
+// ────────────────────────────────────────────────────────────────────────────────
 registerAnalyticsCommands(program);
 
+// help footer
+program.addHelpText(
+  "afterAll",
+  `
+${dim("Config sources (priority high→low):")} CLI ${bold(">")} ENV ${bold(">")} .sentinelrc.json ${bold(">")} defaults
+Repo root: ${dim(REPO_ROOT)}
+`
+);
+
+// run
 program.parseAsync().catch((e) => {
-  fail(String(e?.stack || e))
-  process.exit(1)
-})
+  fail(String(e?.stack || e));
+  process.exit(1);
+});

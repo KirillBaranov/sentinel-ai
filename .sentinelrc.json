@@ -2,15 +2,19 @@
   "profile": "frontend",
   "profilesDir": "packages/profiles",
   "provider": "local",
-  "outMd": "dist/review.md",
-  "outJson": "dist/review.json",
   "failOn": "major",
   "maxComments": 50,
+  "out": {
+    "root": ".sentinel",
+    "contextDir": "context",
+    "reviewsDir": "reviews",
+    "analyticsDir": "analytics",
+    "exportsDir": "exports"
+  },
   "analytics": {
     "enabled": true,
-    "outDir": ".sentinel/analytics",
     "salt": "changeme",
     "privacy": "team",
-    "fileMode": "byRun"
+    "mode": "byRun"
   }
 }

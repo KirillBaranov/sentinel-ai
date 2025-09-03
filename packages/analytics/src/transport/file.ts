@@ -9,7 +9,7 @@ export interface Transport {
   write(e: TransportEvent): void;
   currentFile?(): string | undefined;
   rotateForRun?(runId: string): void;
-  close?(): void;                             // <-- добавлено
+  close?(): Promise<void>;
 }
 
 function ymd(d = new Date()) {
@@ -46,26 +46,34 @@ export class FileTransport implements Transport {
     const next = path.join(this.cfg.outDir, `run-${safe}.jsonl`);
     if (this.fileAbs === next && this.stream) return;
 
-    if (this.stream) { try { this.stream.end(); } catch {} this.stream = null; }
+    if (this.stream) {
+      try { this.stream.end(); } catch {}
+      this.stream = null;
+    }
+
     this.fileAbs = next;
     ensureDirForFile(this.fileAbs);
     this.stream = fs.createWriteStream(this.fileAbs, { flags: "a" });
   }
 
   write(e: TransportEvent) {
+    const line = JSON.stringify(e) + "\n";
     if (!this.stream) {
+      // ленивое открытие fallback-файла (byDay)
       const fallback = path.join(this.cfg.outDir, `${ymd()}.jsonl`);
       ensureDirForFile(fallback);
       this.fileAbs = fallback;
       this.stream = fs.createWriteStream(fallback, { flags: "a" });
     }
-    this.stream.write(JSON.stringify(e) + "\n");
+    this.stream.write(line);
   }
 
-  close() {
-    if (this.stream) {
-      try { this.stream.end(); } catch {}
-      this.stream = null;
-    }
+  async close(): Promise<void> {
+    if (!this.stream) return;
+    await new Promise<void>((resolve) => {
+      // end() инициирует flush и закрытие
+      this.stream!.end(() => resolve());
+    });
+    this.stream = null;
   }
 }

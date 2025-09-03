@@ -60,7 +60,7 @@ export class AnalyticsRuntime implements AnalyticsClient {
     this.finished = false;
     this.seenFindings.clear();
 
-    // переключаем файл на run (если нужно)
+    // переключаем файл на run (если режим byRun)
     this.transport.rotateForRun?.(runId);
 
     const e = { ...this.envEnvelope("run.started"), payload: payload ?? {} };
@@ -68,19 +68,32 @@ export class AnalyticsRuntime implements AnalyticsClient {
     this.transport.write(e);
     void this.plugins.onEvent(e);
 
-    // ---- SAFE FINISH HOOKS (однократно на запуск)
+    // ── SAFE FINISH HOOKS (однократно на запуск)
     const safeFinish = () => {
+      // если основное finish() не вызвалось — минимально закроем ран
       if (!this.finished && this.currentRunId) {
         try {
-          // минимальный payload, чтобы закрыть ран
-          const ev = { ...this.envEnvelope("run.finished"), payload: { duration_ms: 0, findings_total: 0, findings_by_severity: { critical:0, major:0, minor:0, info:0 } } };
+          const ev = {
+            ...this.envEnvelope("run.finished"),
+            payload: {
+              duration_ms: 0,
+              findings_total: 0,
+              findings_by_severity: { critical: 0, major: 0, minor: 0, info: 0 },
+            },
+          };
           EnvelopeV1.parse(ev);
           this.transport.write(ev);
           this.finished = true;
         } catch {}
       }
-      try { this.transport.close?.(); } catch {}
-      this.unsubs.forEach(u => { try { u(); } catch {} });
+      // закрываем транспорт (без await — мы в синхронном обработчике сигнала)
+      try {
+        void this.transport.close?.();
+      } catch {}
+      // снимаем подписки
+      this.unsubs.forEach((u) => {
+        try { u(); } catch {}
+      });
       this.unsubs = [];
     };
 
@@ -90,8 +103,14 @@ export class AnalyticsRuntime implements AnalyticsClient {
     process.once("exit", onExit);
     process.once("SIGINT", onSig);
     process.once("SIGTERM", onSig);
-    process.once("uncaughtException", (err) => { console.error("[analytics] uncaughtException", err); safeFinish(); });
-    process.once("unhandledRejection", (err) => { console.error("[analytics] unhandledRejection", err); safeFinish(); });
+    process.once("uncaughtException", (err) => {
+      console.error("[analytics] uncaughtException", err);
+      safeFinish();
+    });
+    process.once("unhandledRejection", (err) => {
+      console.error("[analytics] unhandledRejection", err);
+      safeFinish();
+    });
 
     this.unsubs = [
       () => process.off("exit", onExit),
@@ -104,7 +123,7 @@ export class AnalyticsRuntime implements AnalyticsClient {
     if (!this.cfg.enabled || !this.currentRunId || this.finished) return;
 
     const finding_id = makeFindingId(this.currentRunId, evt.rule_id, evt.file_hash, evt.locator);
-    if (this.seenFindings.has(finding_id)) return;        // <-- DEDUP по run
+    if (this.seenFindings.has(finding_id)) return; // дедуп в рамках run
     this.seenFindings.add(finding_id);
 
     const e = { ...this.envEnvelope("finding.reported"), payload: { ...evt, finding_id } };
@@ -113,7 +132,8 @@ export class AnalyticsRuntime implements AnalyticsClient {
     void this.plugins.onEvent(e);
   }
 
-  finish(payload: RunFinishPayload) {
+  // ⬇⬇⬇ ключевая правка: делаем async и ждём flush плагинов и транспорта
+  async finish(payload: RunFinishPayload) {
     if (!this.cfg.enabled || !this.currentRunId || this.finished) return;
 
     const e = { ...this.envEnvelope("run.finished"), payload };
@@ -121,13 +141,17 @@ export class AnalyticsRuntime implements AnalyticsClient {
     this.transport.write(e);
     this.finished = true;
 
-    // give plugins a chance to flush, then close file
-    this.plugins.onEvent(e)
-      .catch(() => {})
-      .finally(() => this.plugins.onFinish().catch(() => {}));
+    try {
+      await this.plugins.onEvent(e);
+    } finally {
+      await this.plugins.onFinish().catch(() => {});
+      await this.transport.close?.();
+    }
 
-    try { this.transport.close?.(); } catch {}
-    this.unsubs.forEach(u => { try { u(); } catch {} });
+    // аккуратно снимаем подписки
+    this.unsubs.forEach((u) => {
+      try { u(); } catch {}
+    });
     this.unsubs = [];
   }
 }

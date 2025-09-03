@@ -13,7 +13,7 @@ export function createAnalyticsClient(ctx: BaseCtx, cfg: ResolvedAnalyticsConfig
       init: async () => {},
       start: () => {},
       finding: () => {},
-      finish: () => {},
+      finish: async () => {},
     };
   }
   const transport = new FileTransport(cfg);

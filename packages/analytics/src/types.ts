@@ -48,5 +48,5 @@ export interface AnalyticsClient {
   init(): Promise<void>;
   start(runId: string, payload?: Record<string, any>): void;
   finding(evt: FindingPayload): void;
-  finish(payload: RunFinishPayload): void;
+  finish(payload: RunFinishPayload): Promise<void>;
 }

@@ -180,7 +180,7 @@ export async function runReviewCLI(opts: {
     })
   }
 
-  analytics.finish({
+  await analytics.finish({
     duration_ms: Date.now() - startedAt,
     findings_total: findings.length,
     findings_by_severity: counts,

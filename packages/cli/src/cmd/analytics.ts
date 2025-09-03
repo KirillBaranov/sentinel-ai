@@ -1,5 +1,5 @@
-import path from "node:path";
 import fs from "node:fs";
+import path from "node:path";
 import { Command } from "commander";
 import { bold, cyan, dim, green, red, yellow } from "colorette";
 import { findRepoRoot, linkifyFile } from "../cli-utils";
@@ -8,14 +8,11 @@ import {
   printLastRunSummary,
   printTop,
   exportViews,
-  printTrend
-} from "@sentinel/analytics";
-
-import {
+  printTrend,
   queryLastRuns,
   queryDailyTrend,
   queryTopRules,
-  querySeverityTotals
+  querySeverityTotals,
 } from "@sentinel/analytics";
 
 const REPO = findRepoRoot();
@@ -25,16 +22,17 @@ function prettyRel(repo: string, abs: string) {
 }
 
 export function registerAnalyticsCommands(program: Command) {
+  // 1) Ingest
   program
     .command("analytics:ingest")
     .description("Ingest JSONL analytics into SQLite db (idempotent)")
     .option("--from <dir>", "directory with jsonl", path.join(REPO, ".sentinel/analytics"))
-    .option("--db <file>",  "sqlite db file", path.join(REPO, ".sentinel/analytics/analytics.db"))
+    .option("--db <file>", "sqlite db file", path.join(REPO, ".sentinel/analytics/analytics.db"))
     .option("--since <ymd>", "YYYY-MM-DD filter")
     .action(async (opts) => {
       const fromDir = path.isAbsolute(opts.from) ? opts.from : path.join(REPO, opts.from);
-      const dbPath  = path.isAbsolute(opts.db)   ? opts.db   : path.join(REPO, opts.db);
-      const since   = opts.since as string | undefined;
+      const dbPath = path.isAbsolute(opts.db) ? opts.db : path.join(REPO, opts.db);
+      const since = opts.since as string | undefined;
 
       const started = Date.now();
       console.log(bold("Analytics Ingest"));
@@ -43,37 +41,31 @@ export function registerAnalyticsCommands(program: Command) {
       if (since) console.log("  " + cyan("since:") + " " + since);
 
       try {
-        // Может вернуть stats, а может ничего — поддерживаем оба варианта.
         const stats: any = await ingestJsonlToSqlite({ fromDir, dbPath, since });
 
-        // Если аналитика уже возвращает статистику — распечатаем красиво
         if (stats && typeof stats === "object") {
           const dur = Date.now() - started;
           console.log("");
           console.log(bold("Ingest stats"));
           console.log("  " + cyan("files:    ")
             + `${stats.filesMatched ?? stats.filesScanned ?? 0}`
-            + (typeof stats.filesScanned === "number"
-                ? dim(` / scanned ${stats.filesScanned}`) : ""));
+            + (typeof stats.filesScanned === "number" ? dim(` / scanned ${stats.filesScanned}`) : ""));
           console.log("  " + cyan("events:   ")
             + `${stats.eventsValid ?? stats.eventsRead ?? 0}`
-            + (typeof stats.eventsRead === "number"
-                ? dim(` / read ${stats.eventsRead}`) : ""));
+            + (typeof stats.eventsRead === "number" ? dim(` / read ${stats.eventsRead}`) : ""));
           console.log("  " + cyan("upserted: ")
             + `runs ${stats.runsUpserted ?? 0}, findings ${stats.findingsUpserted ?? 0}`);
           if (typeof stats.duplicatesSkipped === "number") {
-            console.log("  " + cyan("skipped:  ")
-              + `${stats.duplicatesSkipped} ` + dim("(duplicates)"));
+            console.log("  " + cyan("skipped:  ") + `${stats.duplicatesSkipped} ` + dim("(duplicates)"));
           }
           if (stats.firstTs || stats.lastTs) {
             const firstIso = stats.firstTs ? new Date(stats.firstTs).toISOString() : "—";
-            const lastIso  = stats.lastTs  ? new Date(stats.lastTs).toISOString()  : "—";
+            const lastIso = stats.lastTs ? new Date(stats.lastTs).toISOString() : "—";
             console.log("  " + cyan("window:   ") + `${firstIso} ${dim("→")} ${lastIso}`);
           }
           console.log("  " + cyan("duration: ") + `${dur} ms`);
           console.log(green("Done."));
         } else {
-          // Старый контракт: просто сообщаем, что всё ок.
           console.log(green("Done."));
         }
       } catch (e: any) {
@@ -83,13 +75,13 @@ export function registerAnalyticsCommands(program: Command) {
       }
     });
 
+  // 2) Print last run
   program
     .command("analytics:print")
     .description("Print last run summary from SQLite")
     .option("--db <file>", "sqlite db file", path.join(REPO, ".sentinel/analytics/analytics.db"))
     .action((opts) => {
       const dbPath = path.isAbsolute(opts.db) ? opts.db : path.join(REPO, opts.db);
-
       console.log(bold("Analytics Print"));
       console.log("  " + cyan("db:   ") + prettyRel(REPO, dbPath));
 
@@ -107,30 +99,31 @@ export function registerAnalyticsCommands(program: Command) {
       }
     });
 
+  // 3) Stats: runs
   program
-  .command("analytics:stats:runs")
-  .description("List last N runs")
-  .option("--db <file>", "sqlite db file", path.join(REPO, ".sentinel/analytics/analytics.db"))
-  .option("--limit <n>", "how many", "10")
-  .action((opts) => {
-    const dbPath = path.isAbsolute(opts.db) ? opts.db : path.join(REPO, opts.db);
-    const limit  = Number(opts.limit) || 10;
-    const rows = queryLastRuns(dbPath, limit);
+    .command("analytics:stats:runs")
+    .description("List last N runs")
+    .option("--db <file>", "sqlite db file", path.join(REPO, ".sentinel/analytics/analytics.db"))
+    .option("--limit <n>", "how many", "10")
+    .action((opts) => {
+      const dbPath = path.isAbsolute(opts.db) ? opts.db : path.join(REPO, opts.db);
+      const limit = Number(opts.limit) || 10;
+      const rows = queryLastRuns(dbPath, limit);
 
-    console.log(bold("Last Runs"));
-    console.log("  " + cyan("db: ") + dim(path.relative(REPO, dbPath)));
-    for (const r of rows) {
-      const started = new Date(r.ts_start).toISOString();
-      const finished = r.ts_finish ? new Date(r.ts_finish).toISOString() : "—";
-      console.log(
-        ` • ${r.run_id} ${dim(`(${started} → ${finished})`)}\n` +
-        `   ${dim(`project ${r.project_id}, profile ${r.profile}, provider ${r.provider}, env ${r.env}`)}\n` +
-        `   findings ${r.findings_total ?? 0} ${dim(`(crit ${r.critical ?? 0}, major ${r.major ?? 0}, minor ${r.minor ?? 0}, info ${r.info ?? 0})`)}`
-      );
-    }
-  });
+      console.log(bold("Last Runs"));
+      console.log("  " + cyan("db: ") + dim(path.relative(REPO, dbPath)));
+      for (const r of rows) {
+        const started = new Date(r.ts_start).toISOString();
+        const finished = r.ts_finish ? new Date(r.ts_finish).toISOString() : "—";
+        console.log(
+          ` • ${r.run_id} ${dim(`(${started} → ${finished})`)}\n` +
+          `   ${dim(`project ${r.project_id}, profile ${r.profile}, provider ${r.provider}, env ${r.env}`)}\n` +
+          `   findings ${r.findings_total ?? 0} ${dim(`(crit ${r.critical ?? 0}, major ${r.major ?? 0}, minor ${r.minor ?? 0}, info ${r.info ?? 0})`)}`
+        );
+      }
+    });
 
-  // 2) Тренд по дням
+  // 4) Stats: daily trend
   program
     .command("analytics:stats:trend")
     .description("Daily trend for last N days")
@@ -138,7 +131,7 @@ export function registerAnalyticsCommands(program: Command) {
     .option("--days <n>", "days window", "14")
     .action((opts) => {
       const dbPath = path.isAbsolute(opts.db) ? opts.db : path.join(REPO, opts.db);
-      const days   = Number(opts.days) || 14;
+      const days = Number(opts.days) || 14;
       const rows = queryDailyTrend(dbPath, days);
 
       console.log(bold("Daily Trend"));
@@ -152,7 +145,7 @@ export function registerAnalyticsCommands(program: Command) {
       }
     });
 
-  // 3) Топ правил
+  // 5) Stats: top rules
   program
     .command("analytics:stats:top-rules")
     .description("Top rules by findings")
@@ -160,7 +153,7 @@ export function registerAnalyticsCommands(program: Command) {
     .option("--limit <n>", "how many", "10")
     .action((opts) => {
       const dbPath = path.isAbsolute(opts.db) ? opts.db : path.join(REPO, opts.db);
-      const limit  = Number(opts.limit) || 10;
+      const limit = Number(opts.limit) || 10;
       const rows = queryTopRules(dbPath, limit);
 
       console.log(bold("Top Rules"));
@@ -174,7 +167,7 @@ export function registerAnalyticsCommands(program: Command) {
       }
     });
 
-  // 4) Суммарная разбивка по severity
+  // 6) Stats: severity totals
   program
     .command("analytics:stats:severity")
     .description("Totals by severity (all time)")
@@ -193,27 +186,30 @@ export function registerAnalyticsCommands(program: Command) {
       console.log(green("OK"));
     });
 
+  // 7) High-level top view
   program
-  .command("analytics:top")
-  .description("Show top rules/files/providers for a period")
-  .option("--db <file>", "sqlite db file", path.join(REPO, ".sentinel/analytics/analytics.db"))
-  .option("--since <expr>", "period (e.g. 7d, 30d, 90d)", "30d")
-  .option("--limit <n>", "top N", "10")
-  .action(async (opts) => {
-    const dbPath = path.isAbsolute(opts.db) ? opts.db : path.join(REPO, opts.db)
-    await printTop({ dbPath, since: opts.since, limit: Number(opts.limit) || 10 })
-  })
+    .command("analytics:top")
+    .description("Show top rules/files/providers for a period")
+    .option("--db <file>", "sqlite db file", path.join(REPO, ".sentinel/analytics/analytics.db"))
+    .option("--since <expr>", "period (e.g. 7d, 30d, 90d)", "30d")
+    .option("--limit <n>", "top N", "10")
+    .action(async (opts) => {
+      const dbPath = path.isAbsolute(opts.db) ? opts.db : path.join(REPO, opts.db);
+      await printTop({ dbPath, since: opts.since, limit: Number(opts.limit) || 10 });
+    });
 
+  // 8) High-level trend
   program
     .command("analytics:trend")
     .description("Print daily trend by severity")
     .option("--db <file>", "sqlite db file", path.join(REPO, ".sentinel/analytics/analytics.db"))
     .option("--since <expr>", "period (e.g. 14d, 30d, 6m)", "14d")
     .action(async (opts) => {
-      const dbPath = path.isAbsolute(opts.db) ? opts.db : path.join(REPO, opts.db)
-      await printTrend({ dbPath, since: opts.since })
-    })
+      const dbPath = path.isAbsolute(opts.db) ? opts.db : path.join(REPO, opts.db);
+      await printTrend({ dbPath, since: opts.since });
+    });
 
+  // 9) Export views
   program
     .command("analytics:export")
     .description("Export key views to CSV/JSON")
@@ -221,9 +217,9 @@ export function registerAnalyticsCommands(program: Command) {
     .option("--out <dir>", "output dir", path.join(REPO, "dist/analytics-export"))
     .option("--format <fmt>", "csv|json", "csv")
     .action(async (opts) => {
-      const dbPath = path.isAbsolute(opts.db) ? opts.db : path.join(REPO, opts.db)
-      const outDir = path.isAbsolute(opts.out) ? opts.out : path.join(REPO, opts.out)
-      await exportViews({ dbPath, outDir, format: (opts.format || "csv") as "csv" | "json" })
-      console.log(`exported → ${outDir}`)
-    })
+      const dbPath = path.isAbsolute(opts.db) ? opts.db : path.join(REPO, opts.db);
+      const outDir = path.isAbsolute(opts.out) ? opts.out : path.join(REPO, opts.out);
+      await exportViews({ dbPath, outDir, format: (opts.format || "csv") as "csv" | "json" });
+      console.log(`exported → ${outDir}`);
+    });
 }
