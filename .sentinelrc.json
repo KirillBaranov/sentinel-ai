@@ -5,5 +5,19 @@
   "outMd": "dist/review.md",
   "outJson": "dist/review.json",
   "failOn": "major",
-  "maxComments": 50
+  "maxComments": 50,
+  "analytics": {
+    "enabled": true,
+    "outDir": ".sentinel/analytics",
+    "salt": "changeme",
+    "privacy": "team",
+    "plugins": [
+      "@acme/http-sink",
+      "./packages/plugins/custom-kpi"
+    ],
+    "pluginConfig": {
+      "@acme/http-sink": { "url": "https://analytics.example/ingest" },
+      "./packages/plugins/custom-kpi": { "emitHtml": "dist/analytics/custom.html" }
+    }
+  }
 }

@@ -43,6 +43,9 @@ export interface SentinelRc {
     enabled?: boolean;
     outDir?: string;
     salt?: string;
+    privacy?: "team" | "detailed";
+    plugins?: string[];
+    pluginConfig?: Record<string, any>;
   };
 }
 
@@ -94,6 +97,10 @@ function envAsRc(): Partial<SentinelRc> {
   if (process.env.SENTINEL_PROVIDER) out.provider = process.env.SENTINEL_PROVIDER as ProviderName
   if (process.env.SENTINEL_FAIL_ON) out.failOn = process.env.SENTINEL_FAIL_ON as FailOn
   if (process.env.SENTINEL_MAX_COMMENTS) out.maxComments = Number(process.env.SENTINEL_MAX_COMMENTS)
+  if (process.env.SENTINEL_ANALYTICS) out.analytics = { enabled: true };
+  if (process.env.SENTINEL_ANALYTICS_DIR) out.analytics = merge(out.analytics || {}, { outDir: process.env.SENTINEL_ANALYTICS_DIR });
+  if (process.env.SENTINEL_SALT) out.analytics = merge(out.analytics || {}, { salt: process.env.SENTINEL_SALT });
+  if (process.env.SENTINEL_ANALYTICS_PRIVACY) out.analytics = merge(out.analytics || {}, { privacy: process.env.SENTINEL_ANALYTICS_PRIVACY });
 
   const outDir  = process.env.SENTINEL_OUT_DIR
   const outMd   = process.env.SENTINEL_OUT_MD
