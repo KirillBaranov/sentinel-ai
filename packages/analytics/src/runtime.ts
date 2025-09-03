@@ -1,17 +1,18 @@
-// runtime.ts
+import type { FindingPayload, RunFinishPayload } from "./types";
 import { EnvelopeV1 } from "./schemas";
 import { makeFindingId } from "./hash";
-import { ResolvedAnalyticsConfig, AnalyticsClient, FindingPayload, RunFinishPayload } from "./types";
-import { BaseCtx } from "./plugin/types";
-import { Transport } from "./transport/file";
-import { PluginHost } from "./plugin/host";
-import { Hasher } from "./hash/hasher";
+import type { AnalyticsClient } from "./types";
+import type { Transport } from "./transport/file";
+import type { PluginHost } from "./plugin/host";
+import type { Hasher } from "./hash/hasher";
+import type { ResolvedAnalyticsConfig } from "./types";
+import type { BaseCtx } from "./plugin/types";
 
 export class AnalyticsRuntime implements AnalyticsClient {
   private currentRunId?: string;
-  private started = false;
   private finished = false;
-  private seenFindingIds = new Set<string>();
+  private seenFindings = new Set<string>();
+  private unsubs: Array<() => void> = [];
 
   constructor(
     private ctx: BaseCtx,
@@ -55,47 +56,78 @@ export class AnalyticsRuntime implements AnalyticsClient {
   start(runId: string, payload?: Record<string, any>) {
     if (!this.cfg.enabled) return;
 
-    // idempotent start
-    if (this.started && this.currentRunId === runId) return;
-
-    // reset per-run state
     this.currentRunId = runId;
-    this.started = true;
     this.finished = false;
-    this.seenFindingIds.clear();
+    this.seenFindings.clear();
 
-    // rotate file when byRun
-    if (this.cfg.mode === "byRun" && this.transport.rotateForRun) {
-      this.transport.rotateForRun(runId);
-    }
+    // переключаем файл на run (если нужно)
+    this.transport.rotateForRun?.(runId);
 
     const e = { ...this.envEnvelope("run.started"), payload: payload ?? {} };
     EnvelopeV1.parse(e);
     this.transport.write(e);
-    this.plugins.onEvent(e).catch(() => {});
+    void this.plugins.onEvent(e);
+
+    // ---- SAFE FINISH HOOKS (однократно на запуск)
+    const safeFinish = () => {
+      if (!this.finished && this.currentRunId) {
+        try {
+          // минимальный payload, чтобы закрыть ран
+          const ev = { ...this.envEnvelope("run.finished"), payload: { duration_ms: 0, findings_total: 0, findings_by_severity: { critical:0, major:0, minor:0, info:0 } } };
+          EnvelopeV1.parse(ev);
+          this.transport.write(ev);
+          this.finished = true;
+        } catch {}
+      }
+      try { this.transport.close?.(); } catch {}
+      this.unsubs.forEach(u => { try { u(); } catch {} });
+      this.unsubs = [];
+    };
+
+    const onExit = () => safeFinish();
+    const onSig = () => { safeFinish(); process.exit(130); };
+
+    process.once("exit", onExit);
+    process.once("SIGINT", onSig);
+    process.once("SIGTERM", onSig);
+    process.once("uncaughtException", (err) => { console.error("[analytics] uncaughtException", err); safeFinish(); });
+    process.once("unhandledRejection", (err) => { console.error("[analytics] unhandledRejection", err); safeFinish(); });
+
+    this.unsubs = [
+      () => process.off("exit", onExit),
+      () => process.off("SIGINT", onSig),
+      () => process.off("SIGTERM", onSig),
+    ];
   }
 
   finding(evt: FindingPayload) {
-    if (!this.cfg.enabled || !this.currentRunId || !this.started || this.finished) return;
+    if (!this.cfg.enabled || !this.currentRunId || this.finished) return;
 
     const finding_id = makeFindingId(this.currentRunId, evt.rule_id, evt.file_hash, evt.locator);
-    if (this.seenFindingIds.has(finding_id)) return; // dedup
-    this.seenFindingIds.add(finding_id);
+    if (this.seenFindings.has(finding_id)) return;        // <-- DEDUP по run
+    this.seenFindings.add(finding_id);
 
     const e = { ...this.envEnvelope("finding.reported"), payload: { ...evt, finding_id } };
     EnvelopeV1.parse(e);
     this.transport.write(e);
-    this.plugins.onEvent(e).catch(() => {});
+    void this.plugins.onEvent(e);
   }
 
   finish(payload: RunFinishPayload) {
-    if (!this.cfg.enabled || !this.currentRunId || !this.started || this.finished) return;
-
-    this.finished = true;
+    if (!this.cfg.enabled || !this.currentRunId || this.finished) return;
 
     const e = { ...this.envEnvelope("run.finished"), payload };
     EnvelopeV1.parse(e);
     this.transport.write(e);
-    this.plugins.onEvent(e).finally(() => this.plugins.onFinish().catch(() => {}));
+    this.finished = true;
+
+    // give plugins a chance to flush, then close file
+    this.plugins.onEvent(e)
+      .catch(() => {})
+      .finally(() => this.plugins.onFinish().catch(() => {}));
+
+    try { this.transport.close?.(); } catch {}
+    this.unsubs.forEach(u => { try { u(); } catch {} });
+    this.unsubs = [];
   }
 }

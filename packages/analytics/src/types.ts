@@ -11,6 +11,21 @@ export interface ResolvedAnalyticsConfig {
   pluginConfig: Record<string, any>;
 }
 
+export type IngestStats = {
+  fromDir: string
+  dbPath: string
+  since?: string
+  filesScanned: number
+  filesMatched: number        // учли по маске/фильтру
+  eventsRead: number
+  eventsValid: number         // прошли EnvelopeV1
+  runsUpserted: number
+  findingsUpserted: number
+  duplicatesSkipped: number
+  firstTs?: number            // минимальный ts из загруженного
+  lastTs?: number             // максимальный ts
+};
+
 export type FindingPayload = {
   rule_id: string;
   severity: "info" | "minor" | "major" | "critical";

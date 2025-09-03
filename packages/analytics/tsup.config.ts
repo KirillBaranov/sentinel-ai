@@ -3,9 +3,22 @@ import { defineConfig } from 'tsup'
 export default defineConfig({
   entry: { index: 'src/index.ts' },
   format: ['esm'],
-  dts: false,
+  target: 'node18',              // для CLI/Node
+  platform: 'node',
   sourcemap: true,
-  target: 'es2022',
   clean: true,
-  outDir: 'dist'
+  outDir: 'dist',
+  splitting: false,
+  treeshake: false,
+  dts: false,
+  external: [
+    'better-sqlite3',
+  ],
+  shims: false,
+  banner: {
+    js: `
+import { createRequire as __createRequire } from 'module';
+const require = __createRequire(import.meta.url);
+`.trim(),
+  },
 })

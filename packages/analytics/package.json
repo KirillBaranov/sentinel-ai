@@ -17,7 +17,10 @@
     "clean": "rimraf dist",
     "build:js": "tsup --config tsup.config.ts",
     "build:types": "tsc -p tsconfig.types.json --emitDeclarationOnly",
-    "build": "pnpm clean && pnpm build:js && pnpm build:types"
+    "build": "pnpm clean && pnpm build:js && pnpm build:types",
+
+    "analytics:ingest": "node dist/index.js analytics:ingest",
+    "analytics:print": "node dist/index.js analytics:print"
   },
   "dependencies": {
     "@sentinel/core": "workspace:*"

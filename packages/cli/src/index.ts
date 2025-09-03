@@ -22,6 +22,7 @@ import {
   type SeverityMap,
   renderMarkdown,
 } from '@sentinel/core'
+import { registerAnalyticsCommands } from './cmd/analytics'
 
 // Local type definition for ReviewJson (чтобы не тянуть типы из core прямо сюда)
 interface ReviewJson {
@@ -299,6 +300,8 @@ ${dim('Config sources (priority high→low):')} CLI ${bold('>')} ENV ${bold('>')
 ENV vars: SENTINEL_PROFILE, SENTINEL_PROFILES_DIR, SENTINEL_PROVIDER, SENTINEL_OUT_DIR, SENTINEL_OUT_MD, SENTINEL_OUT_JSON, SENTINEL_FAIL_ON, SENTINEL_MAX_COMMENTS, SENTINEL_DEBUG, SENTINEL_ANALYTICS, SENTINEL_ANALYTICS_DIR, SENTINEL_ANALYTICS_SALT
 Repo root: ${dim(REPO_ROOT)}
 `)
+
+registerAnalyticsCommands(program);
 
 program.parseAsync().catch((e) => {
   fail(String(e?.stack || e))

@@ -9,6 +9,7 @@ export interface Transport {
   write(e: TransportEvent): void;
   currentFile?(): string | undefined;
   rotateForRun?(runId: string): void;
+  close?(): void;                             // <-- добавлено
 }
 
 function ymd(d = new Date()) {
@@ -19,21 +20,19 @@ function ymd(d = new Date()) {
 }
 
 function sanitizeRunId(runId: string) {
-  // безопасное имя файла
   return runId.replace(/[^a-zA-Z0-9_-]/g, "-");
 }
 
 export class FileTransport implements Transport {
+  private stream: fs.WriteStream | null = null;
   private fileAbs?: string;
 
   constructor(private cfg: ResolvedAnalyticsConfig) {
-    // гарантируем наличие директории назначения
     fs.mkdirSync(this.cfg.outDir, { recursive: true });
-
-    // для byDay заранее вычисляем путь (можно и «лениво» — не принципиально)
     if (this.cfg.mode === "byDay") {
       this.fileAbs = path.join(this.cfg.outDir, `${ymd()}.jsonl`);
       ensureDirForFile(this.fileAbs);
+      this.stream = fs.createWriteStream(this.fileAbs, { flags: "a" });
     }
   }
 
@@ -42,27 +41,31 @@ export class FileTransport implements Transport {
   }
 
   rotateForRun(runId: string) {
-    // актуально только для byRun
     if (this.cfg.mode !== "byRun") return;
     const safe = sanitizeRunId(runId);
     const next = path.join(this.cfg.outDir, `run-${safe}.jsonl`);
-    if (this.fileAbs === next) return;
+    if (this.fileAbs === next && this.stream) return;
+
+    if (this.stream) { try { this.stream.end(); } catch {} this.stream = null; }
     this.fileAbs = next;
     ensureDirForFile(this.fileAbs);
+    this.stream = fs.createWriteStream(this.fileAbs, { flags: "a" });
   }
 
   write(e: TransportEvent) {
-    // если файл ещё не выбран (например, byDay — «лениво»)
-    if (!this.fileAbs) {
-      this.fileAbs =
-        this.cfg.mode === "byRun"
-          ? path.join(this.cfg.outDir, "run-unknown.jsonl")
-          : path.join(this.cfg.outDir, `${ymd()}.jsonl`);
-      ensureDirForFile(this.fileAbs);
+    if (!this.stream) {
+      const fallback = path.join(this.cfg.outDir, `${ymd()}.jsonl`);
+      ensureDirForFile(fallback);
+      this.fileAbs = fallback;
+      this.stream = fs.createWriteStream(fallback, { flags: "a" });
     }
+    this.stream.write(JSON.stringify(e) + "\n");
+  }
 
-    const line = JSON.stringify(e) + "\n";
-    // синхронная запись — без буферов/таймеров → без гонок и пустых файлов
-    fs.appendFileSync(this.fileAbs, line, "utf8");
+  close() {
+    if (this.stream) {
+      try { this.stream.end(); } catch {}
+      this.stream = null;
+    }
   }
 }
