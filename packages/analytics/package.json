@@ -20,7 +20,10 @@
     "build": "pnpm clean && pnpm build:js && pnpm build:types",
 
     "analytics:ingest": "node dist/index.js analytics:ingest",
-    "analytics:print": "node dist/index.js analytics:print"
+    "analytics:print":  "node dist/index.js analytics:print",
+    "analytics:top":    "node dist/index.js analytics:top",
+    "analytics:trend":  "node dist/index.js analytics:trend",
+    "analytics:export": "node dist/index.js analytics:export"
   },
   "dependencies": {
     "@sentinel/core": "workspace:*"

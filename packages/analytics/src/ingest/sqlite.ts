@@ -24,7 +24,7 @@ export type IngestOptions = {
   since?: string;    // YYYY-MM-DD (UTC, опционально)
 };
 
-function parseSinceMs(since?: string): number | undefined {
+export function parseSinceMs(since?: string): number | undefined {
   if (!since) return undefined;
   // интерпретируем как UTC полночь
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(since.trim());

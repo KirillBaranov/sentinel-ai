@@ -75,12 +75,11 @@
     "sentinel:review:local:analytics:dev": "SENTINEL_ANALYTICS=1 SENTINEL_ANALYTICS_DIR=.sentinel/analytics pnpm sentinel:review:local:nofail:dev",
     "sentinel:review:local:analytics": "pnpm -r build && SENTINEL_ANALYTICS=1 SENTINEL_ANALYTICS_DIR=.sentinel/analytics pnpm --filter @sentinel/cli exec node dist/index.js review --provider local --diff fixtures/changes.diff --profile frontend --profiles-dir packages/profiles --out-md dist/review.md --out-json dist/review.json --fail-on none",
 
-    "sentinel:analytics:ingest": "pnpm --filter @sentinel/analytics run analytics:ingest",
-    "sentinel:analytics:print": "pnpm --filter @sentinel/analytics run analytics:print",
-    "sentinel:analytics:runs": "pnpm --filter @sentinel/cli exec node dist/index.js analytics:stats:runs",
-    "sentinel:analytics:trend": "pnpm --filter @sentinel/cli exec node dist/index.js analytics:stats:trend",
-    "sentinel:analytics:top-rules": "pnpm --filter @sentinel/cli exec node dist/index.js analytics:stats:top-rules",
-    "sentinel:analytics:severity": "pnpm --filter @sentinel/cli exec node dist/index.js analytics:stats:severity"
+    "sentinel:analytics:ingest": "pnpm --filter @sentinel/cli exec node dist/index.js analytics:ingest",
+    "sentinel:analytics:print":  "pnpm --filter @sentinel/cli exec node dist/index.js analytics:print",
+    "sentinel:analytics:top":    "pnpm --filter @sentinel/cli exec node dist/index.js analytics:top",
+    "sentinel:analytics:trend":  "pnpm --filter @sentinel/cli exec node dist/index.js analytics:trend",
+    "sentinel:analytics:export": "pnpm --filter @sentinel/cli exec node dist/index.js analytics:export"
   },
   "lint-staged": {
     "*.{ts,tsx,js,jsx,json,md,yml,yaml}": [

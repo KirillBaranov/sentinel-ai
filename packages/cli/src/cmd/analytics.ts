@@ -3,7 +3,13 @@ import fs from "node:fs";
 import { Command } from "commander";
 import { bold, cyan, dim, green, red, yellow } from "colorette";
 import { findRepoRoot, linkifyFile } from "../cli-utils";
-import { ingestJsonlToSqlite, printLastRunSummary } from "@sentinel/analytics";
+import {
+  ingestJsonlToSqlite,
+  printLastRunSummary,
+  printTop,
+  exportViews,
+  printTrend
+} from "@sentinel/analytics";
 
 import {
   queryLastRuns,
@@ -124,66 +130,100 @@ export function registerAnalyticsCommands(program: Command) {
     }
   });
 
-// 2) Тренд по дням
-program
-  .command("analytics:stats:trend")
-  .description("Daily trend for last N days")
+  // 2) Тренд по дням
+  program
+    .command("analytics:stats:trend")
+    .description("Daily trend for last N days")
+    .option("--db <file>", "sqlite db file", path.join(REPO, ".sentinel/analytics/analytics.db"))
+    .option("--days <n>", "days window", "14")
+    .action((opts) => {
+      const dbPath = path.isAbsolute(opts.db) ? opts.db : path.join(REPO, opts.db);
+      const days   = Number(opts.days) || 14;
+      const rows = queryDailyTrend(dbPath, days);
+
+      console.log(bold("Daily Trend"));
+      console.log("  " + cyan("db:   ") + dim(path.relative(REPO, dbPath)));
+      console.log("  " + cyan("days: ") + days);
+      for (const r of rows) {
+        console.log(
+          ` • ${r.ymd}: runs ${r.runs}, findings ${r.findings} ` +
+          dim(`(crit ${r.critical}, major ${r.major}, minor ${r.minor}, info ${r.info})`)
+        );
+      }
+    });
+
+  // 3) Топ правил
+  program
+    .command("analytics:stats:top-rules")
+    .description("Top rules by findings")
+    .option("--db <file>", "sqlite db file", path.join(REPO, ".sentinel/analytics/analytics.db"))
+    .option("--limit <n>", "how many", "10")
+    .action((opts) => {
+      const dbPath = path.isAbsolute(opts.db) ? opts.db : path.join(REPO, opts.db);
+      const limit  = Number(opts.limit) || 10;
+      const rows = queryTopRules(dbPath, limit);
+
+      console.log(bold("Top Rules"));
+      console.log("  " + cyan("db:    ") + dim(path.relative(REPO, dbPath)));
+      console.log("  " + cyan("limit: ") + limit);
+      for (const r of rows) {
+        console.log(
+          ` • ${r.rule_id}: ${r.cnt} ` +
+          dim(`(crit ${r.critical}, major ${r.major}, minor ${r.minor}, info ${r.info})`)
+        );
+      }
+    });
+
+  // 4) Суммарная разбивка по severity
+  program
+    .command("analytics:stats:severity")
+    .description("Totals by severity (all time)")
+    .option("--db <file>", "sqlite db file", path.join(REPO, ".sentinel/analytics/analytics.db"))
+    .action((opts) => {
+      const dbPath = path.isAbsolute(opts.db) ? opts.db : path.join(REPO, opts.db);
+      const s = querySeverityTotals(dbPath);
+
+      console.log(bold("Severity Totals"));
+      console.log("  " + cyan("db:       ") + dim(path.relative(REPO, dbPath)));
+      console.log("  " + cyan("findings: ") + (s.findings ?? 0));
+      console.log("  " + cyan("critical: ") + (s.critical ?? 0));
+      console.log("  " + cyan("major:    ") + (s.major ?? 0));
+      console.log("  " + cyan("minor:    ") + (s.minor ?? 0));
+      console.log("  " + cyan("info:     ") + (s.info ?? 0));
+      console.log(green("OK"));
+    });
+
+  program
+  .command("analytics:top")
+  .description("Show top rules/files/providers for a period")
   .option("--db <file>", "sqlite db file", path.join(REPO, ".sentinel/analytics/analytics.db"))
-  .option("--days <n>", "days window", "14")
-  .action((opts) => {
-    const dbPath = path.isAbsolute(opts.db) ? opts.db : path.join(REPO, opts.db);
-    const days   = Number(opts.days) || 14;
-    const rows = queryDailyTrend(dbPath, days);
+  .option("--since <expr>", "period (e.g. 7d, 30d, 90d)", "30d")
+  .option("--limit <n>", "top N", "10")
+  .action(async (opts) => {
+    const dbPath = path.isAbsolute(opts.db) ? opts.db : path.join(REPO, opts.db)
+    await printTop({ dbPath, since: opts.since, limit: Number(opts.limit) || 10 })
+  })
 
-    console.log(bold("Daily Trend"));
-    console.log("  " + cyan("db:   ") + dim(path.relative(REPO, dbPath)));
-    console.log("  " + cyan("days: ") + days);
-    for (const r of rows) {
-      console.log(
-        ` • ${r.ymd}: runs ${r.runs}, findings ${r.findings} ` +
-        dim(`(crit ${r.critical}, major ${r.major}, minor ${r.minor}, info ${r.info})`)
-      );
-    }
-  });
+  program
+    .command("analytics:trend")
+    .description("Print daily trend by severity")
+    .option("--db <file>", "sqlite db file", path.join(REPO, ".sentinel/analytics/analytics.db"))
+    .option("--since <expr>", "period (e.g. 14d, 30d, 6m)", "14d")
+    .action(async (opts) => {
+      const dbPath = path.isAbsolute(opts.db) ? opts.db : path.join(REPO, opts.db)
+      await printTrend({ dbPath, since: opts.since })
+    })
 
-// 3) Топ правил
-program
-  .command("analytics:stats:top-rules")
-  .description("Top rules by findings")
-  .option("--db <file>", "sqlite db file", path.join(REPO, ".sentinel/analytics/analytics.db"))
-  .option("--limit <n>", "how many", "10")
-  .action((opts) => {
-    const dbPath = path.isAbsolute(opts.db) ? opts.db : path.join(REPO, opts.db);
-    const limit  = Number(opts.limit) || 10;
-    const rows = queryTopRules(dbPath, limit);
-
-    console.log(bold("Top Rules"));
-    console.log("  " + cyan("db:    ") + dim(path.relative(REPO, dbPath)));
-    console.log("  " + cyan("limit: ") + limit);
-    for (const r of rows) {
-      console.log(
-        ` • ${r.rule_id}: ${r.cnt} ` +
-        dim(`(crit ${r.critical}, major ${r.major}, minor ${r.minor}, info ${r.info})`)
-      );
-    }
-  });
-
-// 4) Суммарная разбивка по severity
-program
-  .command("analytics:stats:severity")
-  .description("Totals by severity (all time)")
-  .option("--db <file>", "sqlite db file", path.join(REPO, ".sentinel/analytics/analytics.db"))
-  .action((opts) => {
-    const dbPath = path.isAbsolute(opts.db) ? opts.db : path.join(REPO, opts.db);
-    const s = querySeverityTotals(dbPath);
-
-    console.log(bold("Severity Totals"));
-    console.log("  " + cyan("db:       ") + dim(path.relative(REPO, dbPath)));
-    console.log("  " + cyan("findings: ") + (s.findings ?? 0));
-    console.log("  " + cyan("critical: ") + (s.critical ?? 0));
-    console.log("  " + cyan("major:    ") + (s.major ?? 0));
-    console.log("  " + cyan("minor:    ") + (s.minor ?? 0));
-    console.log("  " + cyan("info:     ") + (s.info ?? 0));
-    console.log(green("OK"));
-  });
+  program
+    .command("analytics:export")
+    .description("Export key views to CSV/JSON")
+    .option("--db <file>", "sqlite db file", path.join(REPO, ".sentinel/analytics/analytics.db"))
+    .option("--out <dir>", "output dir", path.join(REPO, "dist/analytics-export"))
+    .option("--format <fmt>", "csv|json", "csv")
+    .action(async (opts) => {
+      const dbPath = path.isAbsolute(opts.db) ? opts.db : path.join(REPO, opts.db)
+      const outDir = path.isAbsolute(opts.out) ? opts.out : path.join(REPO, opts.out)
+      await exportViews({ dbPath, outDir, format: (opts.format || "csv") as "csv" | "json" })
+      console.log(`exported → ${outDir}`)
+    })
 }
