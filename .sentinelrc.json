@@ -11,13 +11,6 @@
     "outDir": ".sentinel/analytics",
     "salt": "changeme",
     "privacy": "team",
-    "plugins": [
-      "@acme/http-sink",
-      "./packages/plugins/custom-kpi"
-    ],
-    "pluginConfig": {
-      "@acme/http-sink": { "url": "https://analytics.example/ingest" },
-      "./packages/plugins/custom-kpi": { "emitHtml": "dist/analytics/custom.html" }
-    }
+    "fileMode": "byRun"
   }
 }

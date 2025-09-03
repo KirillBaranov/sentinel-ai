@@ -1,90 +1,101 @@
-import { JsonlWriter } from "@sentinel/analytics/src/writer.js";
-import { EnvelopeV1 } from "@sentinel/analytics/src/schemas.js";
-import { salted, makeFindingId } from "@sentinel/analytics/src/hash.js";
-import { loadPlugins } from "@sentinel/analytics/src/plugin/loader.js";
+// runtime.ts
+import { EnvelopeV1 } from "./schemas";
+import { makeFindingId } from "./hash";
+import { ResolvedAnalyticsConfig, AnalyticsClient, FindingPayload, RunFinishPayload } from "./types";
+import { BaseCtx } from "./plugin/types";
+import { Transport } from "./transport/file";
+import { PluginHost } from "./plugin/host";
+import { Hasher } from "./hash/hasher";
 
-type BaseCtx = {
-  projectRemoteUrl?: string;
-  commitSha?: string;
-  branch?: string;
-  provider?: string;
-  profile?: string;
-  env?: "ci"|"dev"|"local";
-};
+export class AnalyticsRuntime implements AnalyticsClient {
+  private currentRunId?: string;
+  private started = false;
+  private finished = false;
+  private seenFindingIds = new Set<string>();
 
-export class AnalyticsRuntime {
-  private writer = new JsonlWriter();
-  private pluginsReady = false;
-  private plugins: Awaited<ReturnType<typeof loadPlugins>>["plugins"] = [];
+  constructor(
+    private ctx: BaseCtx,
+    private cfg: ResolvedAnalyticsConfig,
+    private transport: Transport,
+    private plugins: PluginHost,
+    private hasher: Hasher
+  ) {}
 
-  constructor(private baseCtx: BaseCtx) {}
+  diagnostics() {
+    return {
+      enabled: this.cfg.enabled,
+      mode: this.cfg.mode,
+      outDir: this.cfg.outDir,
+      currentFile: this.transport.currentFile?.(),
+      privacy: this.cfg.privacy,
+    };
+  }
 
-  async initPlugins() {
-    const { plugins } = await loadPlugins();
-    this.plugins = plugins;
-    // runtime hook
-    await Promise.all(this.plugins.map(p => p.onEventWriteStart?.()));
-    this.pluginsReady = true;
+  async init() {
+    if (!this.cfg.enabled) return;
+    await this.plugins.init();
   }
 
   private envEnvelope(type: string) {
-    const project_id = salted(this.baseCtx.projectRemoteUrl || "unknown");
     return {
       v: 1 as const,
       type,
       ts: Date.now(),
       run_id: this.currentRunId!,
-      project_id,
-      commit_sha: this.baseCtx.commitSha,
-      branch: this.baseCtx.branch,
-      provider: this.baseCtx.provider,
-      profile: this.baseCtx.profile,
-      env: this.baseCtx.env || (process.env.SENTINEL_ENV as any) || "dev",
+      project_id: this.hasher.projectId(this.ctx.projectRemoteUrl),
+      commit_sha: this.ctx.commitSha,
+      branch: this.ctx.branch,
+      provider: this.ctx.provider,
+      profile: this.ctx.profile,
+      env: this.ctx.env || "dev",
+      privacy: this.cfg.privacy,
     };
   }
-
-  private currentRunId?: string;
 
   start(runId: string, payload?: Record<string, any>) {
+    if (!this.cfg.enabled) return;
+
+    // idempotent start
+    if (this.started && this.currentRunId === runId) return;
+
+    // reset per-run state
     this.currentRunId = runId;
-    const e = { ...this.envEnvelope("run.started"), payload };
-    EnvelopeV1.parse(e); // базовая валидация
-    this.writer.write(e);
-    if (this.pluginsReady) this.plugins.forEach(p => p.onEventWrite?.(e).catch(()=>{}));
-  }
+    this.started = true;
+    this.finished = false;
+    this.seenFindingIds.clear();
 
-  finding(args: {
-    rule_id: string;
-    severity: "info"|"minor"|"major"|"critical";
-    file_hash: string;
-    locator: string;
-    signals?: Record<string, any>;
-  }) {
-    const finding_id = makeFindingId(this.currentRunId!, args.rule_id, args.file_hash, args.locator);
-    const e = {
-      ...this.envEnvelope("finding.reported"),
-      payload: { ...args, finding_id },
-    };
+    // rotate file when byRun
+    if (this.cfg.mode === "byRun" && this.transport.rotateForRun) {
+      this.transport.rotateForRun(runId);
+    }
+
+    const e = { ...this.envEnvelope("run.started"), payload: payload ?? {} };
     EnvelopeV1.parse(e);
-    this.writer.write(e);
-    if (this.pluginsReady) this.plugins.forEach(p => p.onEventWrite?.(e).catch(()=>{}));
+    this.transport.write(e);
+    this.plugins.onEvent(e).catch(() => {});
   }
 
-  finish(payload: {
-    duration_ms: number;
-    findings_total: number;
-    findings_by_severity: { critical: number; major: number; minor: number; info: number };
-    impact_avg?: number;
-    risk_level?: "low"|"medium"|"high"|"critical";
-    tests_changed?: boolean;
-  }) {
+  finding(evt: FindingPayload) {
+    if (!this.cfg.enabled || !this.currentRunId || !this.started || this.finished) return;
+
+    const finding_id = makeFindingId(this.currentRunId, evt.rule_id, evt.file_hash, evt.locator);
+    if (this.seenFindingIds.has(finding_id)) return; // dedup
+    this.seenFindingIds.add(finding_id);
+
+    const e = { ...this.envEnvelope("finding.reported"), payload: { ...evt, finding_id } };
+    EnvelopeV1.parse(e);
+    this.transport.write(e);
+    this.plugins.onEvent(e).catch(() => {});
+  }
+
+  finish(payload: RunFinishPayload) {
+    if (!this.cfg.enabled || !this.currentRunId || !this.started || this.finished) return;
+
+    this.finished = true;
+
     const e = { ...this.envEnvelope("run.finished"), payload };
     EnvelopeV1.parse(e);
-    this.writer.write(e);
-    if (this.pluginsReady) {
-      this.plugins.forEach(async (p) => {
-        try { await p.onEventWrite?.(e); await p.onEventWriteFinish?.(); } catch {}
-      });
-    }
+    this.transport.write(e);
+    this.plugins.onEvent(e).finally(() => this.plugins.onFinish().catch(() => {}));
   }
 }

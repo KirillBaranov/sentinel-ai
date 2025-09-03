@@ -1,5 +1,4 @@
-export * from "./schemas";
-export * from "./writer";
-export * from "./hash";
-export * from "./plugin/types";
-export * from "./plugin/loader";
+export * from "./types";
+export * from "./plugin/types"
+export { resolveAnalyticsConfig } from "./config/resolve";
+export { createAnalyticsClient } from "./public";
