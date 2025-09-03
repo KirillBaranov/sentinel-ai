@@ -15,6 +15,8 @@ import {
   printRenderSummaryMarkdown,
 } from './cli-utils'
 
+export { ensureDirForFile } from "./cli-utils"
+
 import {
   type RenderOptions,
   type SeverityMap,
@@ -118,21 +120,28 @@ program
   .option('--out-json <path>', 'canonical review JSON')
   .option('--fail-on <level>', 'none|major|critical (exit policy)')
   .option('--max-comments <n>', 'cap number of findings')
-  .option('--analytics', 'enable analytics (file JSONL sink)', false)
-  .option('--analytics-out <dir>', 'analytics output dir (default: <repo>/dist/analytics)')
+  // без дефолта: отличаем "флаг не передан" от "false"
+  .option('--analytics', 'enable analytics (file JSONL sink)')
+  .option('--analytics-out <dir>', 'analytics output dir (overrides rc; default from rc or .sentinel/analytics)')
   .option('--debug', 'verbose debug logs', false)
-  .action(async (opts) => {
+  .action(async (opts: any) => {
     const outputOverrides: Record<string, string> = {}
     if (typeof opts.outMd === 'string') outputOverrides.mdName = opts.outMd
     if (typeof opts.outJson === 'string') outputOverrides.jsonName = opts.outJson
 
-    const cfg = loadConfig({
+    // безопасный парс max-comments
+    const parsedMax =
+      typeof opts.maxComments === 'string' ? Number(opts.maxComments) : opts.maxComments
+    const maxComments =
+      Number.isFinite(parsedMax as number) ? (parsedMax as number) : undefined
+
+    // грузим rc (+ env) и даём CLI переопределить только явно переданные поля
+    const rc = loadConfig({
       defaultProfile: opts.profile,
       profilesDir: opts.profilesDir,
       provider: opts.provider,
       failOn: opts.failOn,
-      maxComments:
-        typeof opts.maxComments === 'string' ? Number(opts.maxComments) : opts.maxComments,
+      maxComments,
       output: Object.keys(outputOverrides).length ? outputOverrides : undefined,
     })
 
@@ -146,24 +155,44 @@ program
     try {
       const diffPath = path.isAbsolute(diff) ? diff : path.join(REPO_ROOT, diff)
 
+      // приоритеты:
+      // enabled: CLI (--analytics) > rc.analytics.enabled > ENV(SENTINEL_ANALYTICS)
+      const analyticsEnabled =
+        typeof opts.analytics === 'boolean'
+          ? opts.analytics
+          : !!rc.analytics?.enabled ||
+            process.env.SENTINEL_ANALYTICS === '1' ||
+            process.env.SENTINEL_ANALYTICS === 'true'
+
+      // out: CLI (--analytics-out) > rc.analytics.outDir > ENV
+      const analyticsOut =
+        (typeof opts.analyticsOut === 'string' && opts.analyticsOut) ||
+        rc.analytics?.outDir ||
+        process.env.SENTINEL_ANALYTICS_DIR
+
       await runReviewCLI({
         diff: diffPath,
-        profile: cfg.defaultProfile!,
-        profilesDir: cfg.profilesDir,
-        provider: cfg.provider,
+        profile: rc.defaultProfile!,
+        profilesDir: rc.profilesDir,
+        provider: rc.provider,
         outMd: (() => {
-          const name = cfg.output?.mdName ?? 'review.md'
-          return path.isAbsolute(name) ? name : path.join(cfg.output?.dir ?? REPO_ROOT, name)
+          const name = rc.output?.mdName ?? 'review.md'
+          return path.isAbsolute(name)
+            ? name
+            : path.join(rc.output?.dir ?? REPO_ROOT, name)
         })(),
         outJson: (() => {
-          const name = cfg.output?.jsonName ?? 'review.json'
-          return path.isAbsolute(name) ? name : path.join(cfg.output?.dir ?? REPO_ROOT, name)
+          const name = rc.output?.jsonName ?? 'review.json'
+          return path.isAbsolute(name)
+            ? name
+            : path.join(rc.output?.dir ?? REPO_ROOT, name)
         })(),
-        failOn: cfg.failOn as any,
-        maxComments: cfg.maxComments,
-        analytics: !!opts.analytics || process.env.SENTINEL_ANALYTICS === '1',
-        analyticsOut: opts.analyticsOut || process.env.SENTINEL_ANALYTICS_DIR,
+        failOn: rc.failOn as any, // 'none' допускаем только из CLI, rc обычно major|critical
+        maxComments,
+        analytics: analyticsEnabled,
+        analyticsOut,
         debug: !!opts.debug,
+        rc, // ⬅️ пробрасываем целиком для рантайма аналитики
       })
     } catch (e: any) {
       if (/Profile .* not found/.test(String(e?.message))) {

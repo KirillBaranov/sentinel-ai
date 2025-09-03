@@ -4,6 +4,13 @@ import { pathToFileURL } from 'node:url'
 import { bold, cyan, dim, green, red, yellow } from 'colorette'
 import type { Severity } from '@sentinel/core'
 
+type AnalyticsRcLike = {
+  analytics?: {
+    enabled?: boolean
+    outDir?: string
+  }
+}
+
 /** ────────────────────────────────────────────────────────────────────────────
  *  FS helpers
  *  ──────────────────────────────────────────────────────────────────────────── */
@@ -265,4 +272,91 @@ export function printInitNextSteps(args: {
         `--profiles-dir ${relProfilesRoot} ` +
         `--provider local ` +
         `--fail-on none`))
+}
+
+/** Resolve analytics out directory and filename pattern (byDay|byRun) from repo root */
+export function resolveAnalyticsOut(args: {
+  repoRoot: string
+  rc?: AnalyticsRcLike
+  runId?: string
+}) {
+  const { repoRoot, rc, runId } = args
+
+  // enabled: rc or env
+  const enabled =
+    !!rc?.analytics?.enabled ||
+    process.env.SENTINEL_ANALYTICS === '1' ||
+    process.env.SENTINEL_ANALYTICS === 'true'
+
+  // outDir: rc → env → default
+  const outDirRaw =
+    rc?.analytics?.outDir ||
+    process.env.SENTINEL_ANALYTICS_DIR ||
+    '.sentinel/analytics'
+
+  const outDirAbs = resolveRepoPath(repoRoot, outDirRaw)
+
+  // file mode: byDay | byRun (env switch; byDay по умолчанию)
+  const mode =
+    (process.env.SENTINEL_ANALYTICS_FILE_MODE === 'byRun' ? 'byRun' : 'byDay') as
+      | 'byDay'
+      | 'byRun'
+
+  // current file path (best-effort)
+  const day = new Date().toISOString().slice(0, 10)
+  const fileAbs =
+    mode === 'byRun' && runId
+      ? path.join(outDirAbs, `events.run.${runId}.jsonl`)
+      : path.join(outDirAbs, `events.${day}.jsonl`)
+
+  return { enabled, outDirAbs, mode, fileAbs }
+}
+
+/** Pretty print where analytics will be written */
+export function printAnalyticsSummary(args: {
+  repoRoot: string
+  runId?: string
+  diag: {
+    enabled: boolean
+    mode: 'byDay' | 'byRun'
+    outDir?: string
+    currentFile?: string
+    privacy: 'team' | 'detailed'
+  }
+}) {
+  const { repoRoot, runId, diag } = args
+  console.log('')
+  console.log(bold('Analytics summary'))
+
+  if (!diag.enabled) {
+    console.log('  ' + cyan('status:   ') + dim('disabled (rc/env)'))
+    return
+  }
+
+  console.log('  ' + cyan('status:   ') + green('enabled'))
+  console.log('  ' + cyan('mode:     ') + diag.mode)
+  console.log('  ' + cyan('privacy:  ') + diag.privacy)
+  if (runId) {
+    console.log('  ' + cyan('run_id:   ') + dim(runId))
+  }
+
+  if (diag.outDir) {
+    console.log(
+      '  ' +
+        cyan('directory:') +
+        ` ${dim(path.relative(repoRoot, diag.outDir))} ${cyan('→')} ${dim(
+          linkifyFile(diag.outDir)
+        )}`
+    )
+  }
+
+  if (diag.currentFile) {
+    console.log(
+      '  ' +
+        cyan('file:     ') +
+        ` ${dim(path.relative(repoRoot, diag.currentFile))} ${cyan('→')} ${dim(
+          linkifyFile(diag.currentFile)
+        )}`
+    )
+  }
 }

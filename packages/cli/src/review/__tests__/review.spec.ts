@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { beforeEach, afterEach, describe, it, expect, vi } from 'vitest'
 
-import { makeSandbox, makeProfile } from './helpers/sandbox'
+import { makeSandbox, makeProfile } from '../../__tests__/helpers/sandbox'
 
 type Finding = { severity: 'critical'|'major'|'minor'|'info', rule: string, file: string, finding: string[], why?: string, suggestion?: string }
 const makeReview = (findings: Finding[]) => ({ ai_review: { run_id: 'test-run', findings } })
