@@ -15,6 +15,7 @@ import {
   findRepoRoot,
   fail,
   printRenderSummaryMarkdown,
+  printRenderSummaryHtml,
 } from "./cli-utils";
 
 import {
@@ -305,15 +306,30 @@ program
   .option("--out <path>", "output review.html")
   .action(async (opts) => {
     try {
-      const rc = loadConfig();
-      const defaultOut = path.join(rc.out.reviewsDirAbs, rc.profile, "review.html");
-
       const inPath = path.isAbsolute(opts.in) ? opts.in : path.join(REPO_ROOT, opts.in);
-      const outPath = opts.out
-        ? (path.isAbsolute(opts.out) ? opts.out : path.join(REPO_ROOT, opts.out))
-        : defaultOut;
 
+      if (!fs.existsSync(inPath)) {
+        fail(`[render-html] input not found: ${inPath}`);
+        process.exit(2);
+      }
+
+      let outPath: string;
+      if (opts.out) {
+        outPath = path.isAbsolute(opts.out) ? opts.out : path.join(REPO_ROOT, opts.out);
+      } else {
+        const dir  = path.dirname(inPath);
+        const base = path.basename(inPath).replace(/\.json$/i, "");
+        outPath = path.join(dir, `${base}.html`);
+      }
+
+      fs.mkdirSync(path.dirname(outPath), { recursive: true });
       await renderHtmlCLI({ inFile: inPath, outFile: outPath });
+
+      printRenderSummaryHtml({
+        repoRoot: REPO_ROOT,
+        inFile: inPath,
+        outFile: outPath,
+      });
     } catch (e: any) {
       fail(String(e?.stack || e));
       process.exit(1);
