@@ -1,4 +1,5 @@
 name: Sentinel Review
+
 on:
   pull_request:
     types: [opened, synchronize, reopened]
@@ -21,33 +22,50 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with: { fetch-depth: 0 }
+        with:
+          fetch-depth: 0
 
+      # 👉 pnpm версию берём из package.json ("packageManager"), не указываем здесь вручную
       - uses: pnpm/action-setup@v4
-        with: { version: 9 }
+        with:
+          run_install: false
+
       - uses: actions/setup-node@v4
-        with: { node-version: 20, cache: pnpm }
+        with:
+          node-version: 20
+          cache: pnpm
 
       - run: pnpm install --frozen-lockfile
       - run: pnpm -r run build
 
       - name: Build diff
+        id: diff
+        shell: bash
         run: |
+          set -euo pipefail
           mkdir -p .sentinel/reviews
+
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             BASE="${{ github.event.pull_request.base.sha }}"
             HEAD="${{ github.event.pull_request.head.sha }}"
           else
-            git fetch origin main
-            BASE=$(git merge-base origin/main HEAD)
-            HEAD=HEAD
+            DEFAULT_BRANCH="${{ github.event.repository.default_branch }}"
+            git fetch origin "${DEFAULT_BRANCH}" --depth=1
+            BASE="$(git merge-base "origin/${DEFAULT_BRANCH}" HEAD)"
+            HEAD="HEAD"
           fi
-          git diff --no-color --unified=0 "$BASE...$HEAD" > .sentinel/reviews/changes.diff
-          if [ ! -s .sentinel/reviews/changes.diff ]; then
-            echo "No changes." && exit 0
+
+          git diff --no-color --unified=0 "$BASE...$HEAD" > .sentinel/reviews/changes.diff || true
+
+          if [ -s .sentinel/reviews/changes.diff ]; then
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No changes."
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Run review
+        if: steps.diff.outputs.has_changes == 'true'
         env:
           SENTINEL_ANALYTICS: '1'
           SENTINEL_ANALYTICS_DIR: .sentinel/analytics
@@ -57,14 +75,17 @@ jobs:
             --max-comments "${{ inputs.max_comments || '30' }}"
 
       - name: Ingest + Export analytics
+        if: steps.diff.outputs.has_changes == 'true'
         run: |
           pnpm sentinel:analytics:ingest
           pnpm sentinel:analytics:export
 
       - name: Publish GitHub Check + sticky comment
+        if: steps.diff.outputs.has_changes == 'true'
         run: node scripts/post-results-to-github.cjs
 
       - name: Upload artifacts
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: sentinel-artifacts
