@@ -1,0 +1,72 @@
+name: Sentinel Review
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+    inputs:
+      max_comments: { description: "Inline annotations cap", required: false, default: "30" }
+      fail_on:      { description: "none|major|critical", required: false, default: "major" }
+
+permissions:
+  contents: read
+  checks: write
+  pull-requests: write
+
+concurrency:
+  group: review-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+
+      - uses: pnpm/action-setup@v4
+        with: { version: 9 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: pnpm }
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r run build
+
+      - name: Build diff
+        run: |
+          mkdir -p .sentinel/reviews
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="${{ github.event.pull_request.base.sha }}"
+            HEAD="${{ github.event.pull_request.head.sha }}"
+          else
+            git fetch origin main
+            BASE=$(git merge-base origin/main HEAD)
+            HEAD=HEAD
+          fi
+          git diff --no-color --unified=0 "$BASE...$HEAD" > .sentinel/reviews/changes.diff
+          if [ ! -s .sentinel/reviews/changes.diff ]; then
+            echo "No changes." && exit 0
+          fi
+
+      - name: Run review
+        env:
+          SENTINEL_ANALYTICS: '1'
+          SENTINEL_ANALYTICS_DIR: .sentinel/analytics
+        run: |
+          pnpm sentinel:review -- --diff .sentinel/reviews/changes.diff \
+            --fail-on "${{ inputs.fail_on || 'major' }}" \
+            --max-comments "${{ inputs.max_comments || '30' }}"
+
+      - name: Ingest + Export analytics
+        run: |
+          pnpm sentinel:analytics:ingest
+          pnpm sentinel:analytics:export
+
+      - name: Publish GitHub Check + sticky comment
+        run: node scripts/post-results-to-github.cjs
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: sentinel-artifacts
+          path: .sentinel/**
+          if-no-files-found: ignore
