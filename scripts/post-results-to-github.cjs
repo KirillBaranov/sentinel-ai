@@ -1,6 +1,5 @@
 /* eslint-disable no-console */
 const fs = require('node:fs');
-const path = require('node:path');
 const core = require('@actions/core');
 const github = require('@actions/github');
 
@@ -11,6 +10,7 @@ if (!token) {
 }
 
 const REVIEW_JSON = process.env.REVIEW_JSON || '.sentinel/reviews/review.json';
+const REVIEW_MD   = process.env.REVIEW_MD; // опционально — human MD превью
 const PROFILE     = process.env.PROFILE || 'default';
 const FAIL_ON     = (process.env.FAIL_ON || 'major').toLowerCase(); // none|major|critical
 
@@ -30,7 +30,7 @@ try {
 const findings = review?.ai_review?.findings || [];
 const counts = { critical: 0, major: 0, minor: 0, info: 0 };
 for (const f of findings) {
-  if (f?.severity && counts.hasOwnProperty(f.severity)) counts[f.severity]++;
+  if (f?.severity && Object.prototype.hasOwnProperty.call(counts, f.severity)) counts[f.severity]++;
 }
 const total = findings.length;
 const max =
@@ -46,12 +46,19 @@ function toConclusion(threshold) {
   return (counts.critical > 0 || counts.major > 0) ? 'failure' : 'success';
 }
 
+let mdPreview = '';
+if (REVIEW_MD && fs.existsSync(REVIEW_MD)) {
+  try {
+    const md = fs.readFileSync(REVIEW_MD, 'utf8');
+    mdPreview = md.split('\n').slice(0, 30).join('\n');
+  } catch (_) { /* noop */ }
+}
+
 const octo = github.getOctokit(token);
 const { owner, repo } = github.context.repo;
 const sha = github.context.payload?.pull_request?.head?.sha || github.context.sha;
 const prNumber = github.context.payload?.pull_request?.number;
 
-// ---------- GitHub Check ----------
 (async () => {
   const title = `Sentinel Review — ${PROFILE}: ${total} findings (max=${max})`;
   const summary = [
@@ -61,9 +68,8 @@ const prNumber = github.context.payload?.pull_request?.number;
     `**Fail-on**: \`${FAIL_ON}\``,
     ``,
     `Artifacts: see workflow artifacts (prefix: \`sentinel-artifacts-${PROFILE}\`)`,
-  ].join('\n');
+  ].filter(Boolean).join('\n');
 
-  // попытка красивого job summary
   try {
     await core.summary
       .addHeading(`Sentinel Review — ${PROFILE}`)
@@ -78,7 +84,7 @@ const prNumber = github.context.payload?.pull_request?.number;
         ['Fail-on', FAIL_ON],
       ])
       .write();
-  } catch (_) { /* noop */ }
+  } catch (_) {}
 
   await octo.rest.checks.create({
     owner, repo,
@@ -89,7 +95,6 @@ const prNumber = github.context.payload?.pull_request?.number;
     output: { title, summary },
   });
 
-  // ---------- Sticky Comment per profile ----------
   if (prNumber) {
     const marker = `<!-- sentinel-sticky-comment:${PROFILE} -->`;
     const body = [
@@ -100,8 +105,9 @@ const prNumber = github.context.payload?.pull_request?.number;
       `**Fail-on**: \`${FAIL_ON}\``,
       ``,
       `**Artifacts**:`,
-      `- Review JSON/MD: in workflow artifacts \`sentinel-artifacts-${PROFILE}\``,
+      `- Review JSON/MD/HTML: in workflow artifacts \`sentinel-artifacts-${PROFILE}\``,
       `- Analytics exports: same artifact bundle`,
+      mdPreview ? `\n<details><summary>Preview (human MD)</summary>\n\n${mdPreview}\n\n</details>\n` : ''
     ].join('\n');
 
     const comments = await octo.rest.issues.listComments({
@@ -110,13 +116,9 @@ const prNumber = github.context.payload?.pull_request?.number;
     const prev = comments.data.find(c => c.body && c.body.includes(marker));
 
     if (prev) {
-      await octo.rest.issues.updateComment({
-        owner, repo, comment_id: prev.id, body
-      });
+      await octo.rest.issues.updateComment({ owner, repo, comment_id: prev.id, body });
     } else {
-      await octo.rest.issues.createComment({
-        owner, repo, issue_number: prNumber, body
-      });
+      await octo.rest.issues.createComment({ owner, repo, issue_number: prNumber, body });
     }
   }
 

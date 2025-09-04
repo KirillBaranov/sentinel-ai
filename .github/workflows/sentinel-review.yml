@@ -39,8 +39,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
-          # соберём ARR из inputs.profiles (только для workflow_dispatch) или из каталога
           RAW="${{ inputs.profiles || '' }}"
           if [ -n "$RAW" ]; then
             IFS=',' read -ra ARR <<< "$RAW"
@@ -50,15 +48,13 @@ jobs:
               [ -d "$d" ] && ARR+=("$(basename "$d")")
             done
           fi
-
-          # fallback на один дефолтный профиль
           if [ ${#ARR[@]} -eq 0 ]; then ARR+=(frontend); fi
 
           echo "Detected profiles: ${ARR[*]}"
 
-          # matrix-объект вида { "profile": ["frontend","backend"] } в COMPACT JSON
+          # compact JSON: {"profile":["frontend","backend"]}
           JSON=$(printf '%s\n' "${ARR[@]}" | jq -R . | jq -cs '{profile: .}')
-          echo "matrix=$JSON" >> "$GITHUB_OUTPUT"
+          echo "matrix=${JSON}" >> "$GITHUB_OUTPUT"
 
   review:
     needs: detect-profiles
@@ -70,6 +66,7 @@ jobs:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
 
+      # pnpm: версия берётся из package.json: "packageManager"
       - uses: pnpm/action-setup@v4
         with: { run_install: false }
 
@@ -124,6 +121,20 @@ jobs:
             --fail-on "${{ inputs.fail_on || 'major' }}" \
             --max-comments "${{ inputs.max_comments || '30' }}"
 
+      - name: Render human Markdown (${{ matrix.profile }})
+        if: steps.diff.outputs.has_changes == 'true'
+        run: |
+          pnpm sentinel:render-md -- \
+            --in  ".sentinel/reviews/${{ matrix.profile }}/review.json" \
+            --out ".sentinel/reviews/${{ matrix.profile }}/review.human.md"
+
+      - name: Render HTML (${{ matrix.profile }})
+        if: steps.diff.outputs.has_changes == 'true'
+        run: |
+          pnpm sentinel:render-html -- \
+            --in  ".sentinel/reviews/${{ matrix.profile }}/review.json" \
+            --out ".sentinel/reviews/${{ matrix.profile }}/review.html"
+
       - name: Ingest + Export analytics
         if: steps.diff.outputs.has_changes == 'true'
         run: |
@@ -135,7 +146,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REVIEW_JSON: .sentinel/reviews/${{ matrix.profile }}/review.json
-          PROFILE: ${{ matrix.profile }}
+          REVIEW_MD:   .sentinel/reviews/${{ matrix.profile }}/review.human.md
+          PROFILE:     ${{ matrix.profile }}
+          FAIL_ON:     ${{ inputs.fail_on || 'major' }}
         run: node scripts/post-results-to-github.cjs
 
       - name: Upload artifacts (${{ matrix.profile }})
@@ -146,5 +159,7 @@ jobs:
           path: |
             .sentinel/reviews/${{ matrix.profile }}/review.json
             .sentinel/reviews/${{ matrix.profile }}/review.md
+            .sentinel/reviews/${{ matrix.profile }}/review.human.md
+            .sentinel/reviews/${{ matrix.profile }}/review.html
             .sentinel/analytics/**
           if-no-files-found: ignore
