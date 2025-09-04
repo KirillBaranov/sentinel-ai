@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import Database from "better-sqlite3";
 import type { IngestStats } from "../types";
+import { ensureSchema } from "./ensureSchema";
 
 type Event = {
   v: 1;
@@ -59,6 +60,9 @@ export function ingestJsonlToSqlite(opts: IngestOptions): Promise<IngestStats> {
   const sinceMs = parseSinceMs(opts.since);
 
   const db = new Database(opts.dbPath);
+
+  ensureSchema(db);
+
   try {
     db.pragma("journal_mode = WAL");
     db.pragma("synchronous = NORMAL");

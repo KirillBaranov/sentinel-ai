@@ -1,10 +1,12 @@
 import Database from "better-sqlite3";
-import fs from "node:fs"
-import path from "node:path"
-import { cyan, dim, bold, green } from "colorette"
-import { parseSinceMs } from "../ingest/sqlite";
-import { ensureDirForFile } from "../lib/fs";
+import fs from "node:fs";
+import path from "node:path";
+import { cyan, dim, bold } from "colorette";
+import { ensureSchema } from "../ingest/ensureSchema";
 
+// ──────────────────────────────────────────────────────────────────────────────
+// Типы
+// ──────────────────────────────────────────────────────────────────────────────
 export type RunRow = {
   run_id: string; ts_start: number; ts_finish?: number;
   project_id: string; provider: string; profile: string; env: string; privacy?: string;
@@ -23,122 +25,170 @@ export interface ExportOptions {
   limit?: number;           // лимит для топов/последних запусков (по умолчанию 50)
 }
 
-export function queryLastRuns(dbPath: string, limit = 10): RunRow[] {
-  const db = new Database(dbPath, { readonly: true });
-  const rows = db.prepare(`
-    SELECT * FROM runs ORDER BY ts_start DESC LIMIT ?
-  `).all(limit) as RunRow[];
-  db.close();
-  return rows;
-}
-
 export type DailyTrendRow = {
   ymd: string; runs: number; findings: number;
   critical: number; major: number; minor: number; info: number;
 };
 
-export function queryDailyTrend(dbPath: string, days = 14): DailyTrendRow[] {
-  const db = new Database(dbPath, { readonly: true });
-  const rows = db.prepare(`
-    SELECT
-      STRFTIME('%Y-%m-%d', ts_start/1000, 'unixepoch') AS ymd,
-      COUNT(*) AS runs,
-      SUM(COALESCE(findings_total,0)) AS findings,
-      SUM(COALESCE(critical,0)) AS critical,
-      SUM(COALESCE(major,0))    AS major,
-      SUM(COALESCE(minor,0))    AS minor,
-      SUM(COALESCE(info,0))     AS info
-    FROM runs
-    GROUP BY ymd
-    ORDER BY ymd DESC
-    LIMIT ?
-  `).all(days) as DailyTrendRow[];
-  db.close();
-  return rows.reverse();
-}
-
 export type TopRuleRow = {
   rule_id: string; cnt: number; major: number; minor: number; info: number; critical: number;
 };
 
+export type SeverityTotalRow = {
+  critical: number; major: number; minor: number; info: number; findings: number;
+};
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Локальные парсеры временных параметров
+// ──────────────────────────────────────────────────────────────────────────────
+
+/** "YYYY-MM-DD" → UTC unix ms @ 00:00:00 */
+function parseSinceMs(since?: string): number | undefined {
+  if (!since) return undefined;
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(since.trim());
+  if (!m) return undefined;
+  const y = Number(m[1]), mo = Number(m[2]) - 1, d = Number(m[3]);
+  const ms = Date.UTC(y, mo, d, 0, 0, 0, 0);
+  return Number.isFinite(ms) ? ms : undefined;
+}
+
+/** "30d" / "6m" / "1y" → unix ms порог (сейчас - окно) */
+function parseSinceExpr(expr?: string): number | null {
+  if (!expr) return null;
+  const m = /^(\d+)([dmy])$/.exec(expr.trim());
+  if (!m) return null;
+  const n = Number(m[1]); const unit = m[2];
+  const now = Date.now();
+  const ms = unit === "d" ? n * 864e5 : unit === "m" ? n * 30 * 864e5 : n * 365 * 864e5;
+  return now - ms;
+}
+
+/** unix ms → "YYYY-MM-DD" (UTC) */
+function msToYmdUTC(ms: number): string {
+  const d = new Date(ms);
+  return [
+    d.getUTCFullYear(),
+    String(d.getUTCMonth() + 1).padStart(2, "0"),
+    String(d.getUTCDate()).padStart(2, "0"),
+  ].join("-");
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Простые запросы (используют VIEW’ы, где это возможно)
+// ──────────────────────────────────────────────────────────────────────────────
+
+export function queryLastRuns(dbPath: string, limit = 10): RunRow[] {
+  const db = new Database(dbPath, { readonly: true });
+  ensureSchema(db);
+  const rows = db.prepare(`SELECT * FROM v_runs_last LIMIT ?`).all(limit) as RunRow[];
+  db.close();
+  return rows;
+}
+
+export function queryDailyTrend(dbPath: string, days = 14): DailyTrendRow[] {
+  const db = new Database(dbPath, { readonly: true });
+  ensureSchema(db);
+  const rows = db.prepare(`
+    SELECT * FROM v_daily_trend
+    ORDER BY ymd DESC
+    LIMIT ?
+  `).all(days) as DailyTrendRow[];
+  db.close();
+  // хотим возрастающий порядок слева-направо
+  return rows.reverse();
+}
+
 export function queryTopRules(dbPath: string, limit = 10): TopRuleRow[] {
   const db = new Database(dbPath, { readonly: true });
+  ensureSchema(db);
   const rows = db.prepare(`
-    SELECT rule_id,
-           COUNT(*) AS cnt,
-           SUM(CASE WHEN severity='critical' THEN 1 ELSE 0 END) AS critical,
-           SUM(CASE WHEN severity='major'    THEN 1 ELSE 0 END) AS major,
-           SUM(CASE WHEN severity='minor'    THEN 1 ELSE 0 END) AS minor,
-           SUM(CASE WHEN severity='info'     THEN 1 ELSE 0 END) AS info
-    FROM findings
-    GROUP BY rule_id
-    ORDER BY cnt DESC
+    SELECT * FROM v_top_rules
     LIMIT ?
   `).all(limit) as TopRuleRow[];
   db.close();
   return rows;
 }
 
-export type SeverityTotalRow = {
-  critical: number; major: number; minor: number; info: number; findings: number;
-};
-
 export function querySeverityTotals(dbPath: string): SeverityTotalRow {
   const db = new Database(dbPath, { readonly: true });
-  const row = db.prepare(`
-    SELECT
-      SUM(COALESCE(critical,0)) AS critical,
-      SUM(COALESCE(major,0))    AS major,
-      SUM(COALESCE(minor,0))    AS minor,
-      SUM(COALESCE(info,0))     AS info,
-      SUM(COALESCE(findings_total,0)) AS findings
-    FROM runs
-  `).get() as SeverityTotalRow;
+  ensureSchema(db);
+  const row = db.prepare(`SELECT * FROM v_severity_totals`).get() as SeverityTotalRow;
   db.close();
-  return row || { critical:0, major:0, minor:0, info:0, findings:0 };
+  return row || { critical: 0, major: 0, minor: 0, info: 0, findings: 0 };
 }
 
+// ──────────────────────────────────────────────────────────────────────────────
 export async function printTop(opts: { dbPath: string; since?: string; limit?: number }) {
-  const db = new Database(opts.dbPath, { readonly: true })
-  const limit = opts.limit ?? 10
-  // since в формате '30d' → unixms порог:
-  const sinceMs = parseSinceExpr(opts.since || "30d")
-  const rows = db.prepare(
-    `SELECT rule_id, COUNT(*) as cnt
-     FROM findings
-     WHERE (@sinceMs IS NULL OR ts >= @sinceMs)
-     GROUP BY rule_id
-     ORDER BY cnt DESC
-     LIMIT @limit`
-  ).all({ sinceMs, limit })
+  const db = new Database(opts.dbPath, { readonly: true });
+  ensureSchema(db);
 
-  console.log(bold("Top rules"))
-  for (const r of rows) console.log("  •", r.rule_id, dim(`(${r.cnt})`))
-  db.close()
+  const limit = opts.limit ?? 10;
+  const sinceMs = parseSinceExpr(opts.since || "30d");
+
+  // если есть since — считаем по таблице findings с WHERE
+  // иначе — читаем из v_top_rules (быстрее)
+  const rows = sinceMs
+    ? db.prepare(
+        `SELECT rule_id, COUNT(*) AS cnt
+         FROM findings
+         WHERE ts >= @since
+         GROUP BY rule_id
+         ORDER BY cnt DESC
+         LIMIT @limit`
+      ).all({ since: sinceMs, limit })
+    : db.prepare(
+        `SELECT rule_id, cnt FROM v_top_rules
+         LIMIT @limit`
+      ).all({ limit });
+
+  console.log(bold("Top rules"));
+  for (const r of rows as Array<{ rule_id: string; cnt: number }>) {
+    console.log("  •", r.rule_id, dim(`(${r.cnt})`));
+  }
+  db.close();
 }
 
 export async function printTrend(opts: { dbPath: string; since?: string }) {
-  const db = new Database(opts.dbPath, { readonly: true })
-  const sinceMs = parseSinceExpr(opts.since || "14d")
-  const rows = db.prepare(
-    `SELECT date(datetime(ts/1000,'unixepoch')) AS day, severity, COUNT(*) AS cnt
-     FROM findings
-     WHERE (@sinceMs IS NULL OR ts >= @sinceMs)
-     GROUP BY day, severity
-     ORDER BY day`
-  ).all({ sinceMs })
+  const db = new Database(opts.dbPath, { readonly: true });
+  ensureSchema(db);
 
-  console.log(bold("Trend (daily by severity)"))
-  const grouped: Record<string, Record<string, number>> = {}
-  for (const r of rows) {
-    grouped[r.day] ??= { critical:0, major:0, minor:0, info:0 }
-    grouped![r.day]![r.severity] = r.cnt
+  const sinceMs = parseSinceExpr(opts.since || "14d");
+  if (sinceMs) {
+    // фильтруем по дате от YMD
+    const ymd = msToYmdUTC(sinceMs);
+    const rows = db.prepare(
+      `SELECT * FROM v_daily_trend
+       WHERE ymd >= @ymd
+       ORDER BY ymd`
+    ).all({ ymd }) as DailyTrendRow[];
+
+    console.log(bold("Trend (daily by severity)"));
+    for (const r of rows) {
+      console.log(
+        "  " + cyan(r.ymd) + "  " +
+        `crit ${r.critical} | major ${r.major} | minor ${r.minor} | info ${r.info}`
+      );
+    }
+  } else {
+    const rows = db.prepare(
+      `SELECT * FROM v_daily_trend ORDER BY ymd`
+    ).all() as DailyTrendRow[];
+
+    console.log(bold("Trend (daily by severity)"));
+    for (const r of rows) {
+      console.log(
+        "  " + cyan(r.ymd) + "  " +
+        `crit ${r.critical} | major ${r.major} | minor ${r.minor} | info ${r.info}`
+      );
+    }
   }
-  Object.entries(grouped).forEach(([day, s]) => {
-    console.log("  " + cyan(day) + "  " + `crit ${s.critical} | major ${s.major} | minor ${s.minor} | info ${s.info}`)
-  })
-  db.close()
+
+  db.close();
 }
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Экспорт стандартных представлений
+// ──────────────────────────────────────────────────────────────────────────────
 
 function toCSV(rows: any[]): string {
   if (!rows?.length) return "";
@@ -155,8 +205,12 @@ function toCSV(rows: any[]): string {
   return head + "\n" + body + "\n";
 }
 
+function ensureDir(dir: string) {
+  fs.mkdirSync(dir, { recursive: true });
+}
+
 function writeFile(outDir: string, name: string, fmt: Fmt, rowsOrObj: any): string {
-  ensureDirForFile(outDir);
+  ensureDir(outDir);
   const file = path.join(outDir, `${name}.${fmt}`);
   if (fmt === "json") {
     fs.writeFileSync(file, JSON.stringify(rowsOrObj, null, 2), "utf8");
@@ -184,10 +238,10 @@ export function exportViews(opts: ExportOptions): {
   const days  = Number.isFinite(opts.days as number)  ? (opts.days as number)  : 30;
   const sinceMs = parseSinceMs(opts.since);
 
-  ensureDirForFile(path.dirname(opts.dbPath));
-  ensureDirForFile(opts.outDir);
+  ensureDir(path.dirname(opts.dbPath));
+  ensureDir(opts.outDir);
 
-  // Если БД нет — создаём пустые артефакты, чтобы пайплайн не падал.
+  // Если БД нет — пишем пустые артефакты, чтобы пайплайн не падал.
   if (!fs.existsSync(opts.dbPath)) {
     const emptyFiles = [
       writeFile(opts.outDir, "runs_last",       fmt, []),
@@ -200,86 +254,94 @@ export function exportViews(opts: ExportOptions): {
   }
 
   const db = new Database(opts.dbPath, { readonly: true });
+  ensureSchema(db);
 
   try {
     // 1) Последние запуски
-    const runsStmt = db.prepare(`
+    const runs = db.prepare(`
       SELECT
         run_id, ts_start, ts_finish, project_id, provider, profile, env, privacy,
         duration_ms, findings_total, critical, major, minor, info
-      FROM runs
+      FROM v_runs_last
       ${sinceMs ? "WHERE ts_start >= @since" : ""}
-      ORDER BY ts_start DESC
       LIMIT @limit
-    `);
-    const runs = runsStmt.all({ since: sinceMs, limit });
+    `).all({ since: sinceMs, limit });
 
     // 2) Тренд по дням
-    const trendStmt = db.prepare(`
-      SELECT
-        date(ts/1000, 'unixepoch') AS ymd,
-        COUNT(*)                              AS findings,
-        SUM(CASE WHEN severity='critical' THEN 1 ELSE 0 END) AS critical,
-        SUM(CASE WHEN severity='major'    THEN 1 ELSE 0 END) AS major,
-        SUM(CASE WHEN severity='minor'    THEN 1 ELSE 0 END) AS minor,
-        SUM(CASE WHEN severity='info'     THEN 1 ELSE 0 END) AS info,
-        COUNT(DISTINCT run_id) AS runs
-      FROM findings
-      ${sinceMs ? "WHERE ts >= @since" : ""}
-      GROUP BY ymd
-      ORDER BY ymd DESC
-      LIMIT @days
-    `);
-    const trend = trendStmt.all({ since: sinceMs, days });
+    const trend = sinceMs
+      ? db.prepare(`
+          SELECT * FROM v_daily_trend
+          WHERE ymd >= @ymd
+          ORDER BY ymd DESC
+          LIMIT @days
+        `).all({ ymd: msToYmdUTC(sinceMs), days })
+      : db.prepare(`
+          SELECT * FROM v_daily_trend
+          ORDER BY ymd DESC
+          LIMIT @days
+        `).all({ days });
 
     // 3) Топ правил
-    const topRulesStmt = db.prepare(`
-      SELECT
-        rule_id,
-        COUNT(*) AS cnt,
-        SUM(CASE WHEN severity='critical' THEN 1 ELSE 0 END) AS critical,
-        SUM(CASE WHEN severity='major'    THEN 1 ELSE 0 END) AS major,
-        SUM(CASE WHEN severity='minor'    THEN 1 ELSE 0 END) AS minor,
-        SUM(CASE WHEN severity='info'     THEN 1 ELSE 0 END) AS info
-      FROM findings
-      ${sinceMs ? "WHERE ts >= @since" : ""}
-      GROUP BY rule_id
-      ORDER BY cnt DESC
-      LIMIT @limit
-    `);
-    const topRules = topRulesStmt.all({ since: sinceMs, limit });
+    const topRules = sinceMs
+      ? db.prepare(`
+          SELECT
+            rule_id,
+            COUNT(*) AS cnt,
+            SUM(CASE WHEN severity='critical' THEN 1 ELSE 0 END) AS critical,
+            SUM(CASE WHEN severity='major'    THEN 1 ELSE 0 END) AS major,
+            SUM(CASE WHEN severity='minor'    THEN 1 ELSE 0 END) AS minor,
+            SUM(CASE WHEN severity='info'     THEN 1 ELSE 0 END) AS info
+          FROM findings
+          WHERE ts >= @since
+          GROUP BY rule_id
+          ORDER BY cnt DESC
+          LIMIT @limit
+        `).all({ since: sinceMs, limit })
+      : db.prepare(`SELECT * FROM v_top_rules LIMIT @limit`).all({ limit });
 
     // 4) Топ файлов по хешу
-    const topFilesStmt = db.prepare(`
-      SELECT
-        file_hash,
-        COUNT(*) AS cnt,
-        SUM(CASE WHEN severity='critical' THEN 1 ELSE 0 END) AS critical,
-        SUM(CASE WHEN severity='major'    THEN 1 ELSE 0 END) AS major,
-        SUM(CASE WHEN severity='minor'    THEN 1 ELSE 0 END) AS minor,
-        SUM(CASE WHEN severity='info'     THEN 1 ELSE 0 END) AS info
-      FROM findings
-      ${sinceMs ? "WHERE ts >= @since" : ""}
-      GROUP BY file_hash
-      ORDER BY cnt DESC
-      LIMIT @limit
-    `);
-    const topFiles = topFilesStmt.all({ since: sinceMs, limit });
+    const topFiles = sinceMs
+      ? db.prepare(`
+          SELECT
+            file_hash,
+            COUNT(*) AS cnt,
+            SUM(CASE WHEN severity='critical' THEN 1 ELSE 0 END) AS critical,
+            SUM(CASE WHEN severity='major'    THEN 1 ELSE 0 END) AS major,
+            SUM(CASE WHEN severity='minor'    THEN 1 ELSE 0 END) AS minor,
+            SUM(CASE WHEN severity='info'     THEN 1 ELSE 0 END) AS info
+          FROM findings
+          WHERE ts >= @since
+          GROUP BY file_hash
+          ORDER BY cnt DESC
+          LIMIT @limit
+        `).all({ since: sinceMs, limit })
+      : db.prepare(`
+          SELECT
+            file_hash,
+            COUNT(*) AS cnt,
+            SUM(CASE WHEN severity='critical' THEN 1 ELSE 0 END) AS critical,
+            SUM(CASE WHEN severity='major'    THEN 1 ELSE 0 END) AS major,
+            SUM(CASE WHEN severity='minor'    THEN 1 ELSE 0 END) AS minor,
+            SUM(CASE WHEN severity='info'     THEN 1 ELSE 0 END) AS info
+          FROM findings
+          GROUP BY file_hash
+          ORDER BY cnt DESC
+          LIMIT @limit
+        `).all({ limit });
 
     // 5) Суммарная разбивка по severity
-    const totalsStmt = db.prepare(`
-      SELECT
-        COUNT(*) AS findings,
-        SUM(CASE WHEN severity='critical' THEN 1 ELSE 0 END) AS critical,
-        SUM(CASE WHEN severity='major'    THEN 1 ELSE 0 END) AS major,
-        SUM(CASE WHEN severity='minor'    THEN 1 ELSE 0 END) AS minor,
-        SUM(CASE WHEN severity='info'     THEN 1 ELSE 0 END) AS info
-      FROM findings
-      ${sinceMs ? "WHERE ts >= @since" : ""}
-    `);
-    const totals =
-      totalsStmt.get({ since: sinceMs }) ??
-      { findings: 0, critical: 0, major: 0, minor: 0, info: 0 };
+    const totals = sinceMs
+      ? db.prepare(`
+          SELECT
+            COUNT(*) AS findings,
+            SUM(CASE WHEN severity='critical' THEN 1 ELSE 0 END) AS critical,
+            SUM(CASE WHEN severity='major'    THEN 1 ELSE 0 END) AS major,
+            SUM(CASE WHEN severity='minor'    THEN 1 ELSE 0 END) AS minor,
+            SUM(CASE WHEN severity='info'     THEN 1 ELSE 0 END) AS info
+          FROM findings
+          WHERE ts >= @since
+        `).get({ since: sinceMs }) ?? { findings: 0, critical: 0, major: 0, minor: 0, info: 0 }
+      : db.prepare(`SELECT * FROM v_severity_totals`).get() ?? { findings: 0, critical: 0, major: 0, minor: 0, info: 0 };
 
     // — Записываем файлы
     const files: string[] = [];
@@ -293,19 +355,4 @@ export function exportViews(opts: ExportOptions): {
   } finally {
     db.close();
   }
-}
-
-function parseSinceExpr(expr: string): number | null {
-  // 30d / 14d / 6m / 1y, иначе null = без фильтра
-  const m = /^(\d+)([dmy])$/.exec(expr.trim())
-  if (!m) return null
-  const n = Number(m[1]); const unit = m[2]
-  const now = Date.now()
-  const ms = unit === "d" ? n*864e5 : unit === "m" ? n*30*864e5 : n*365*864e5
-  return now - ms
-}
-function csvSafe(v: any) {
-  if (v == null) return ""
-  const s = String(v)
-  return /[,"\n]/.test(s) ? `"${s.replace(/"/g,'""')}"` : s
 }

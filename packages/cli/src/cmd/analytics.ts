@@ -3,6 +3,7 @@ import path from "node:path";
 import { Command } from "commander";
 import { bold, cyan, dim, green, red, yellow } from "colorette";
 import { findRepoRoot, linkifyFile } from "../cli-utils";
+import { loadConfig } from "../config";
 import {
   ingestJsonlToSqlite,
   printLastRunSummary,
@@ -13,9 +14,16 @@ import {
   queryDailyTrend,
   queryTopRules,
   querySeverityTotals,
+  migrate
 } from "@sentinel/analytics";
 
 const REPO = findRepoRoot();
+const RC = loadConfig(); // ← читаем единый rc один раз
+
+// дефолты из rc (всё уже абсолютное)
+const DEFAULT_FROM = RC.out.analyticsDirAbs;
+const DEFAULT_DB   = path.join(RC.out.analyticsDirAbs, "analytics.db");
+const DEFAULT_EXP  = RC.out.exportsDirAbs;
 
 function prettyRel(repo: string, abs: string) {
   return `${dim(path.relative(repo, abs))} ${cyan("→")} ${dim(linkifyFile(abs))}`;
@@ -26,13 +34,13 @@ export function registerAnalyticsCommands(program: Command) {
   program
     .command("analytics:ingest")
     .description("Ingest JSONL analytics into SQLite db (idempotent)")
-    .option("--from <dir>", "directory with jsonl", path.join(REPO, ".sentinel/analytics"))
-    .option("--db <file>", "sqlite db file", path.join(REPO, ".sentinel/analytics/analytics.db"))
+    .option("--from <dir>", "directory with jsonl", DEFAULT_FROM)
+    .option("--db <file>",  "sqlite db file",       DEFAULT_DB)
     .option("--since <ymd>", "YYYY-MM-DD filter")
     .action(async (opts) => {
-      const fromDir = path.isAbsolute(opts.from) ? opts.from : path.join(REPO, opts.from);
-      const dbPath = path.isAbsolute(opts.db) ? opts.db : path.join(REPO, opts.db);
-      const since = opts.since as string | undefined;
+      const fromDir = path.isAbsolute(opts.from) ? opts.from : path.join(RC.repoRoot, opts.from);
+      const dbPath  = path.isAbsolute(opts.db)   ? opts.db   : path.join(RC.repoRoot, opts.db);
+      const since   = opts.since as string | undefined;
 
       const started = Date.now();
       console.log(bold("Analytics Ingest"));
@@ -60,7 +68,7 @@ export function registerAnalyticsCommands(program: Command) {
           }
           if (stats.firstTs || stats.lastTs) {
             const firstIso = stats.firstTs ? new Date(stats.firstTs).toISOString() : "—";
-            const lastIso = stats.lastTs ? new Date(stats.lastTs).toISOString() : "—";
+            const lastIso  = stats.lastTs  ? new Date(stats.lastTs).toISOString()  : "—";
             console.log("  " + cyan("window:   ") + `${firstIso} ${dim("→")} ${lastIso}`);
           }
           console.log("  " + cyan("duration: ") + `${dur} ms`);
@@ -75,13 +83,25 @@ export function registerAnalyticsCommands(program: Command) {
       }
     });
 
+  // 1.1) Migrate schema/views
+  program
+    .command("analytics:migrate")
+    .description("Create/upgrade SQLite schema and views")
+    .option("--db <file>", "sqlite db file", DEFAULT_DB)
+    .action(async (opts) => {
+      const dbPath = path.isAbsolute(opts.db) ? opts.db : path.join(RC.repoRoot, opts.db);
+      fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+      await migrate({ dbPath });
+      console.log("migrated → " + dbPath);
+    });
+
   // 2) Print last run
   program
     .command("analytics:print")
     .description("Print last run summary from SQLite")
-    .option("--db <file>", "sqlite db file", path.join(REPO, ".sentinel/analytics/analytics.db"))
+    .option("--db <file>", "sqlite db file", DEFAULT_DB)
     .action((opts) => {
-      const dbPath = path.isAbsolute(opts.db) ? opts.db : path.join(REPO, opts.db);
+      const dbPath = path.isAbsolute(opts.db) ? opts.db : path.join(RC.repoRoot, opts.db);
       console.log(bold("Analytics Print"));
       console.log("  " + cyan("db:   ") + prettyRel(REPO, dbPath));
 
@@ -103,11 +123,11 @@ export function registerAnalyticsCommands(program: Command) {
   program
     .command("analytics:stats:runs")
     .description("List last N runs")
-    .option("--db <file>", "sqlite db file", path.join(REPO, ".sentinel/analytics/analytics.db"))
+    .option("--db <file>", "sqlite db file", DEFAULT_DB)
     .option("--limit <n>", "how many", "10")
     .action((opts) => {
-      const dbPath = path.isAbsolute(opts.db) ? opts.db : path.join(REPO, opts.db);
-      const limit = Number(opts.limit) || 10;
+      const dbPath = path.isAbsolute(opts.db) ? opts.db : path.join(RC.repoRoot, opts.db);
+      const limit  = Number(opts.limit) || 10;
       const rows = queryLastRuns(dbPath, limit);
 
       console.log(bold("Last Runs"));
@@ -127,11 +147,11 @@ export function registerAnalyticsCommands(program: Command) {
   program
     .command("analytics:stats:trend")
     .description("Daily trend for last N days")
-    .option("--db <file>", "sqlite db file", path.join(REPO, ".sentinel/analytics/analytics.db"))
+    .option("--db <file>", "sqlite db file", DEFAULT_DB)
     .option("--days <n>", "days window", "14")
     .action((opts) => {
-      const dbPath = path.isAbsolute(opts.db) ? opts.db : path.join(REPO, opts.db);
-      const days = Number(opts.days) || 14;
+      const dbPath = path.isAbsolute(opts.db) ? opts.db : path.join(RC.repoRoot, opts.db);
+      const days   = Number(opts.days) || 14;
       const rows = queryDailyTrend(dbPath, days);
 
       console.log(bold("Daily Trend"));
@@ -149,11 +169,11 @@ export function registerAnalyticsCommands(program: Command) {
   program
     .command("analytics:stats:top-rules")
     .description("Top rules by findings")
-    .option("--db <file>", "sqlite db file", path.join(REPO, ".sentinel/analytics/analytics.db"))
+    .option("--db <file>", "sqlite db file", DEFAULT_DB)
     .option("--limit <n>", "how many", "10")
     .action((opts) => {
-      const dbPath = path.isAbsolute(opts.db) ? opts.db : path.join(REPO, opts.db);
-      const limit = Number(opts.limit) || 10;
+      const dbPath = path.isAbsolute(opts.db) ? opts.db : path.join(RC.repoRoot, opts.db);
+      const limit  = Number(opts.limit) || 10;
       const rows = queryTopRules(dbPath, limit);
 
       console.log(bold("Top Rules"));
@@ -171,9 +191,9 @@ export function registerAnalyticsCommands(program: Command) {
   program
     .command("analytics:stats:severity")
     .description("Totals by severity (all time)")
-    .option("--db <file>", "sqlite db file", path.join(REPO, ".sentinel/analytics/analytics.db"))
+    .option("--db <file>", "sqlite db file", DEFAULT_DB)
     .action((opts) => {
-      const dbPath = path.isAbsolute(opts.db) ? opts.db : path.join(REPO, opts.db);
+      const dbPath = path.isAbsolute(opts.db) ? opts.db : path.join(RC.repoRoot, opts.db);
       const s = querySeverityTotals(dbPath);
 
       console.log(bold("Severity Totals"));
@@ -190,11 +210,11 @@ export function registerAnalyticsCommands(program: Command) {
   program
     .command("analytics:top")
     .description("Show top rules/files/providers for a period")
-    .option("--db <file>", "sqlite db file", path.join(REPO, ".sentinel/analytics/analytics.db"))
+    .option("--db <file>", "sqlite db file", DEFAULT_DB)
     .option("--since <expr>", "period (e.g. 7d, 30d, 90d)", "30d")
     .option("--limit <n>", "top N", "10")
     .action(async (opts) => {
-      const dbPath = path.isAbsolute(opts.db) ? opts.db : path.join(REPO, opts.db);
+      const dbPath = path.isAbsolute(opts.db) ? opts.db : path.join(RC.repoRoot, opts.db);
       await printTop({ dbPath, since: opts.since, limit: Number(opts.limit) || 10 });
     });
 
@@ -202,10 +222,10 @@ export function registerAnalyticsCommands(program: Command) {
   program
     .command("analytics:trend")
     .description("Print daily trend by severity")
-    .option("--db <file>", "sqlite db file", path.join(REPO, ".sentinel/analytics/analytics.db"))
+    .option("--db <file>", "sqlite db file", DEFAULT_DB)
     .option("--since <expr>", "period (e.g. 14d, 30d, 6m)", "14d")
     .action(async (opts) => {
-      const dbPath = path.isAbsolute(opts.db) ? opts.db : path.join(REPO, opts.db);
+      const dbPath = path.isAbsolute(opts.db) ? opts.db : path.join(RC.repoRoot, opts.db);
       await printTrend({ dbPath, since: opts.since });
     });
 
@@ -213,13 +233,14 @@ export function registerAnalyticsCommands(program: Command) {
   program
     .command("analytics:export")
     .description("Export key views to CSV/JSON")
-    .option("--db <file>", "sqlite db file", path.join(REPO, ".sentinel/analytics/analytics.db"))
-    .option("--out <dir>", "output dir", path.join(REPO, "dist/analytics-export"))
+    .option("--db <file>",  "sqlite db file", DEFAULT_DB)
+    .option("--out <dir>",  "output dir",     DEFAULT_EXP)
     .option("--format <fmt>", "csv|json", "csv")
     .action(async (opts) => {
-      const dbPath = path.isAbsolute(opts.db) ? opts.db : path.join(REPO, opts.db);
-      const outDir = path.isAbsolute(opts.out) ? opts.out : path.join(REPO, opts.out);
-      await exportViews({ dbPath, outDir, format: (opts.format || "csv") as "csv" | "json" });
+      const dbPath  = path.isAbsolute(opts.db)  ? opts.db  : path.join(RC.repoRoot, opts.db);
+      const outDir  = path.isAbsolute(opts.out) ? opts.out : path.join(RC.repoRoot, opts.out);
+      const format  = (opts.format || "csv") as "csv" | "json";
+      await exportViews({ dbPath, outDir, format });
       console.log(`exported → ${outDir}`);
     });
 }

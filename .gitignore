@@ -7,6 +7,7 @@ node_modules/
 # sentinel
 .sentinel/context
 .sentinel/reviews
+.sentinel/exports
 
 # Build outputs
 dist/
