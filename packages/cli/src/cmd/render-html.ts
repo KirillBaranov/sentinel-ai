@@ -109,7 +109,9 @@ function mdToHtml(md: string) {
 function wrapHtml(title: string, md: string) {
   const body = mdToHtml(md)
   const esc = (s: string) =>
-    s.replace(/&/g, '&amp;').replace(/<//g, '&lt;').replace(/>/g, '&gt;')
+    s.replace(/&/g, '&amp;')
+     .replace(/</g, '&lt;')
+     .replace(/>/g, '&gt;')
 
   return `<!doctype html>
 <html lang="en">
