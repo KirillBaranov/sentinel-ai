@@ -20,12 +20,13 @@ concurrency:
 jobs:
   review:
     runs-on: ubuntu-latest
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # 👉 pnpm версию берём из package.json ("packageManager"), не указываем здесь вручную
       - uses: pnpm/action-setup@v4
         with:
           run_install: false
