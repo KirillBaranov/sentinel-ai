@@ -216,64 +216,84 @@ program
     }
   });
 
-// ────────────────────────────────────────────────────────────────────────────────
+  // ────────────────────────────────────────────────────────────────────────────────
 // render-md
 // ────────────────────────────────────────────────────────────────────────────────
-program
-  .command('render-md')
-  .description('Render review.json → human-friendly Markdown (with optional template & severity map)')
-  .requiredOption('--in <path>', 'input review.json')
-  .requiredOption('--out <path>', 'output review.md')
-  .option('--template <path>', 'custom template file (abs or repo-root relative)')
-  .option('--severity-map <path>', 'JSON remap of severity labels')
-  .action((opts) => {
-    try {
-      const inPath  = path.isAbsolute(opts.in)  ? opts.in  : path.join(REPO_ROOT, opts.in)
-      const outPath = path.isAbsolute(opts.out) ? opts.out : path.join(REPO_ROOT, opts.out)
+  program
+    .command('render-md')
+    .description('Render review.json → human-friendly Markdown (defaults from config; overridable via flags)')
+    .option('-p, --profile <profile>', 'profile name (default from rc/env)')
+    .option('--in <path>',  'input review.json (abs or repo-root relative)')
+    .option('--out <path>', 'output review.md (abs or repo-root relative)')
+    .option('--template <path>', 'custom template file (abs or repo-root relative)')
+    .option('--severity-map <path>', 'JSON with full SeverityMap {title, icon?, order?}')
+    .action((opts) => {
+      try {
+        // 1) конфиг + профиль
+        const rc = loadConfig({ profile: opts.profile });
+        const profile = opts.profile || process.env.SENTINEL_PROFILE || rc.profile;
 
-      const raw = JSON.parse(fs.readFileSync(inPath, 'utf8')) as ReviewJson
-      const findings = raw.ai_review?.findings ?? []
+        // 2) пути по умолчанию
+        const defaultIn  = path.join(rc.out.reviewsDirAbs, profile, rc.out.jsonName);              // .../reviews/<profile>/review.json
+        const defaultOut = path.join(
+          rc.out.reviewsDirAbs,
+          profile,
+          rc.out.mdName.replace(/\.md$/i, '.human.md')                                            // .../reviews/<profile>/review.human.md
+        );
 
-      const rc = loadConfig()
-      const ropts: RenderOptions = {}
+        const inPath = opts.in
+          ? (path.isAbsolute(opts.in) ? opts.in : path.join(rc.repoRoot, opts.in))
+          : defaultIn;
 
-      // ── template: CLI > rc
-      if (opts.template) {
-        const tpl = path.isAbsolute(opts.template)
-          ? opts.template
-          : path.join(REPO_ROOT, opts.template)
-        if (fs.existsSync(tpl)) ropts.template = fs.readFileSync(tpl, 'utf8')
-      } else if (rc.render.template && fs.existsSync(rc.render.template)) {
-        ropts.template = fs.readFileSync(rc.render.template, 'utf8')
-      }
+        const outPath = opts.out
+          ? (path.isAbsolute(opts.out) ? opts.out : path.join(rc.repoRoot, opts.out))
+          : defaultOut;
 
-      // ── severityMap: CLI > rc  (оба случая нормализуем)
-      const sevOptPath = (opts as any)['severityMap'] || opts['severity-map']
-      if (sevOptPath) {
-        const sp = path.isAbsolute(sevOptPath) ? sevOptPath : path.join(REPO_ROOT, sevOptPath)
-        if (fs.existsSync(sp)) {
-          const rawMap = JSON.parse(fs.readFileSync(sp, 'utf8'))
-          ropts.severityMap = normalizeSeverityMap(rawMap)
+        if (!fs.existsSync(inPath)) {
+          fail(`[render-md] input not found: ${inPath}`);
+          process.exit(2);
         }
-      } else if (rc.render.severityMap) {
-        ropts.severityMap = normalizeSeverityMap(rc.render.severityMap)
+
+        // 3) читаем review.json
+        const raw = JSON.parse(fs.readFileSync(inPath, 'utf8')) as ReviewJson;
+        const findings = raw.ai_review?.findings ?? [];
+
+        // 4) опции рендера: CLI > rc
+        const ropts: RenderOptions = {};
+
+        // template
+        if (opts.template) {
+          const tpl = path.isAbsolute(opts.template) ? opts.template : path.join(rc.repoRoot, opts.template);
+          if (fs.existsSync(tpl)) ropts.template = fs.readFileSync(tpl, 'utf8');
+        } else if (rc.render.template && fs.existsSync(rc.render.template)) {
+          ropts.template = fs.readFileSync(rc.render.template, 'utf8');
+        }
+
+        // severity map — нормализуем к полной форме
+        const sevPath = (opts as any)['severityMap'] || opts['severity-map'];
+        if (sevPath) {
+          const sp = path.isAbsolute(sevPath) ? sevPath : path.join(rc.repoRoot, sevPath);
+          if (fs.existsSync(sp)) ropts.severityMap = normalizeSeverityMap(JSON.parse(fs.readFileSync(sp, 'utf8')));
+        } else if (rc.render.severityMap) {
+          ropts.severityMap = normalizeSeverityMap(rc.render.severityMap);
+        }
+
+        // 5) рендер и запись
+        fs.mkdirSync(path.dirname(outPath), { recursive: true });
+        const md = renderMarkdown(findings, ropts);
+        fs.writeFileSync(outPath, md, 'utf8');
+
+        printRenderSummaryMarkdown({
+          repoRoot: rc.repoRoot,
+          inFile: inPath,
+          outFile: outPath,
+          findingsCount: findings.length,
+        });
+      } catch (e: any) {
+        fail(String(e?.stack || e));
+        process.exit(1);
       }
-
-      const md = renderMarkdown(findings, ropts)
-      fs.mkdirSync(path.dirname(outPath), { recursive: true })
-      fs.writeFileSync(outPath, md, 'utf8')
-
-      printRenderSummaryMarkdown({
-        repoRoot: REPO_ROOT,
-        inFile: inPath,
-        outFile: outPath,
-        findingsCount: findings.length,
-      })
-    } catch (e: any) {
-      fail(String(e?.stack || e))
-      process.exit(1)
-    }
-  })
+    });
 
 // ────────────────────────────────────────────────────────────────────────────────
 /** render-html — по умолчанию кладём в <out.reviewsDirAbs>/<profile>/review.html */
