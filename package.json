@@ -40,7 +40,10 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "type-check": "tsc -b tsconfig.tools.json",
-    "ci:check": "pnpm lint && pnpm type-check && pnpm test -- --run",
+
+    "// ——— ci/qa": "────────────────────────────────────────",
+    "check": "pnpm lint && pnpm type-check && pnpm test -- --run",
+    "ci": "pnpm clean && pnpm build && pnpm check",
 
     "// ——— cleanup": "────────────────────────────────────────",
     "clean": "pnpm -r run clean",
@@ -58,9 +61,9 @@
 
     "// ——— render": "────────────────────────────────────────",
     "sentinel:render-md:dev":   "pnpm -F @sentinel/cli exec tsx src/index.ts render-md --in .sentinel/reviews/review.json --out .sentinel/reviews/review.human.md",
-    "sentinel:render-md":       "pnpm -r build && pnpm -F @sentinel/cli exec node dist/index.js render-md --in .sentinel/reviews/review.json --out .sentinel/reviews/review.human.md",
+    "sentinel:render-md":       "pnpm -r build && SENTINEL_PROFILE=frontend pnpm -F @sentinel/cli exec node dist/index.js render-md",
     "sentinel:render-html:dev": "pnpm -F @sentinel/cli exec tsx src/index.ts render-html --in .sentinel/reviews/review.json --out .sentinel/reviews/review.html",
-    "sentinel:render-html":     "pnpm -r build && pnpm -F @sentinel/cli exec node dist/index.js render-html --in .sentinel/reviews/review.json --out .sentinel/reviews/review.html",
+    "sentinel:render-html":     "pnpm -r build && SENTINEL_PROFILE=frontend pnpm -F @sentinel/cli exec node dist/index.js render-html",
 
     "// ——— analytics": "────────────────────────────────────────",
     "sentinel:analytics:ingest": "pnpm -F @sentinel/cli exec node dist/index.js analytics:ingest",
@@ -97,6 +100,8 @@
     "eslint-plugin-unused-imports": "^4.0.0",
     "prettier": "^3.3.3",
     "typescript": "^5.6.3",
+    "@actions/core": "^1",
+    "@actions/github": "^6",
     "vite": "^5.4.10",
     "vitest": "^2.1.4"
   },
