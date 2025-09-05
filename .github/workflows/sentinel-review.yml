@@ -62,16 +62,27 @@ jobs:
 
           if [ "$ev" = "workflow_dispatch" ]; then
             run="true"
+
           elif [ "$ev" = "pull_request" ]; then
-            labels='${{ toJson(github.event.pull_request.labels) }}'
-            if echo "$labels" | grep -qi '"name":"ai-review"'; then
-              run="true"
+            # 1) Явное добавление метки ai-review
+            if [ "$action" = "labeled" ]; then
+              label_name="${{ github.event.label.name }}"
+              if [ "${label_name,,}" = "ai-review" ]; then
+                run="true"
+              fi
+            # 2) На открытии/переоткрытии — сразу первый отчёт
             elif [ "$action" = "opened" ] || [ "$action" = "reopened" ]; then
               run="true"
+            # 3) На любом другом действии — если метка уже висит на PR
+            else
+              labels='${{ toJson(github.event.pull_request.labels) }}'
+              if echo "$labels" | grep -qi '"name":"ai-review"'; then
+                run="true"
+              fi
             fi
+
           elif [ "$ev" = "issue_comment" ]; then
-            # Запуск по комментарию. Только если это PR и команда /sentinel review,
-            # и автор — MEMBER/OWNER/COLLABORATOR.
+            # Запуск по комменту `/sentinel review`
             is_pr='${{ toJson(github.event.issue.pull_request) }}'
             body='${{ github.event.comment.body }}'
             assoc='${{ github.event.comment.author_association }}'
@@ -89,7 +100,6 @@ jobs:
         if: steps.decide.outputs.run == 'true'
         with: { fetch-depth: 0 }
 
-      # Собираем матрицу профилей
       - id: profiles
         if: steps.decide.outputs.run == 'true'
         run: |
@@ -97,10 +107,8 @@ jobs:
 
           RAW_INPUT="${{ inputs.profiles || '' }}"
 
-          # Для issue_comment: парсим --profiles=... из комментария (если указано)
           if [ "${{ github.event_name }}" = "issue_comment" ]; then
             BODY='${{ github.event.comment.body }}'
-            # вытаскиваем --profiles=foo,bar (если есть)
             if echo "$BODY" | grep -Eoq -- '--profiles=[A-Za-z0-9_,\-]+'; then
               RAW_INPUT="$(echo "$BODY" | sed -n -E 's/.*--profiles=([A-Za-z0-9_,\-]+).*/\1/p' | head -n1)"
             fi
@@ -121,7 +129,6 @@ jobs:
           JSON=$(printf '%s\n' "${ARR[@]}" | jq -R . | jq -cs '{profile: .}')
           echo "matrix=$JSON" >> "$GITHUB_OUTPUT"
 
-      # Разрешаем пороги/лимиты: inputs > comment flags > defaults
       - id: resolve
         if: steps.decide.outputs.run == 'true'
         run: |
@@ -131,11 +138,9 @@ jobs:
 
           if [ "${{ github.event_name }}" = "issue_comment" ]; then
             BODY='${{ github.event.comment.body }}'
-            # --fail=critical|major|none
             if echo "$BODY" | grep -Eoq -- '--fail=(critical|major|none)'; then
               FAIL_ON="$(echo "$BODY" | sed -n -E 's/.*--fail=(critical|major|none).*/\1/p' | head -n1)"
             fi
-            # --max=NUMBER
             if echo "$BODY" | grep -Eoq -- '--max=[0-9]+'; then
               MAX_COMMENTS="$(echo "$BODY" | sed -n -E 's/.*--max=([0-9]+).*/\1/p' | head -n1)"
             fi
@@ -175,7 +180,6 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p .sentinel/reviews
-
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             BASE="${{ github.event.pull_request.base.sha }}"
             HEAD="${{ github.event.pull_request.head.sha }}"
@@ -185,9 +189,7 @@ jobs:
             BASE="$(git merge-base "origin/${DEFAULT_BRANCH}" HEAD)"
             HEAD="HEAD"
           fi
-
           git diff --no-color --unified=0 "$BASE...$HEAD" > .sentinel/reviews/changes.diff || true
-
           if [ -s .sentinel/reviews/changes.diff ]; then
             echo "has_changes=true" >> "$GITHUB_OUTPUT"
           else
