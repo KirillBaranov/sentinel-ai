@@ -5,9 +5,11 @@ node_modules/
 .yarnrc.yml
 
 # sentinel
+.sentinel
 .sentinel/context
 .sentinel/reviews
 .sentinel/exports
+.sentinel/analytics
 
 # Build outputs
 dist/

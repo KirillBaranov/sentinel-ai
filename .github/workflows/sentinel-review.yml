@@ -27,15 +27,38 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  detect-profiles:
+  gate:
+    name: Decide whether to run
     runs-on: ubuntu-latest
     outputs:
-      matrix: ${{ steps.mk.outputs.matrix }}
+      run: ${{ steps.decide.outputs.run }}
+      profiles: ${{ steps.profiles.outputs.matrix }}
     steps:
+      - id: decide
+        shell: bash
+        run: |
+          set -euo pipefail
+          ev="${{ github.event_name }}"
+          run="false"
+          if [ "$ev" = "workflow_dispatch" ]; then
+            run="true"
+          elif [ "$ev" = "pull_request" ]; then
+            action="${{ github.event.action }}"
+            labels='${{ toJson(github.event.pull_request.labels) }}'
+            if echo "$labels" | grep -qi '"name":"ai-review"'; then
+              run="true"
+            elif [ "$action" = "opened" ] || [ "$action" = "reopened" ]; then
+              run="true"
+            fi
+          fi
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+
       - uses: actions/checkout@v4
+        if: steps.decide.outputs.run == 'true'
         with: { fetch-depth: 0 }
 
-      - id: mk
+      - id: profiles
+        if: steps.decide.outputs.run == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -49,24 +72,25 @@ jobs:
             done
           fi
           [ ${#ARR[@]} -eq 0 ] && ARR+=(frontend)
+          echo "Detected profiles: ${ARR[*]}"
           JSON=$(printf '%s\n' "${ARR[@]}" | jq -R . | jq -cs '{profile: .}')
           echo "matrix=$JSON" >> "$GITHUB_OUTPUT"
 
   review:
-    needs: detect-profiles
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      matrix: ${{ fromJSON(needs.detect-profiles.outputs.matrix) }}
-
+      matrix: ${{ fromJson(needs.gate.outputs.profiles) }}
+    env:
+      RUN_AT_UTC: ${{ github.run_started_at }}
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
 
-      # pnpm версию берём из package.json ("packageManager")
       - uses: pnpm/action-setup@v4
         with: { run_install: false }
-
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -81,7 +105,6 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p .sentinel/reviews
-
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             BASE="${{ github.event.pull_request.base.sha }}"
             HEAD="${{ github.event.pull_request.head.sha }}"
@@ -91,9 +114,7 @@ jobs:
             BASE="$(git merge-base "origin/${DEFAULT_BRANCH}" HEAD)"
             HEAD="HEAD"
           fi
-
           git diff --no-color --unified=0 "$BASE...$HEAD" > .sentinel/reviews/changes.diff || true
-
           if [ -s .sentinel/reviews/changes.diff ]; then
             echo "has_changes=true" >> "$GITHUB_OUTPUT"
           else
@@ -111,8 +132,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p ".sentinel/reviews/${SENTINEL_PROFILE}"
-
-          pnpm sentinel:review -- --diff .sentinel/reviews/changes.diff \
+          pnpm -F @sentinel/cli exec node dist/index.js review \
+            --diff .sentinel/reviews/changes.diff \
             --profile "${SENTINEL_PROFILE}" \
             --out-json ".sentinel/reviews/${SENTINEL_PROFILE}/review.json" \
             --out-md   ".sentinel/reviews/${SENTINEL_PROFILE}/review.md" \
@@ -121,7 +142,6 @@ jobs:
 
       - name: Render Markdown (${{ matrix.profile }})
         if: steps.diff.outputs.has_changes == 'true'
-        shell: bash
         run: |
           pnpm -F @sentinel/cli exec node dist/index.js render-md \
             --in  ".sentinel/reviews/${{ matrix.profile }}/review.json" \
@@ -129,7 +149,6 @@ jobs:
 
       - name: Render HTML (${{ matrix.profile }})
         if: steps.diff.outputs.has_changes == 'true'
-        shell: bash
         run: |
           pnpm -F @sentinel/cli exec node dist/index.js render-html \
             --in  ".sentinel/reviews/${{ matrix.profile }}/review.json" \
@@ -138,8 +157,8 @@ jobs:
       - name: Ingest + Export analytics
         if: steps.diff.outputs.has_changes == 'true'
         run: |
-          pnpm sentinel:analytics:ingest
-          pnpm sentinel:analytics:export
+          pnpm -F @sentinel/cli exec node dist/index.js analytics:ingest
+          pnpm -F @sentinel/cli exec node dist/index.js analytics:export
 
       - name: Publish GitHub Check + sticky comment (${{ matrix.profile }})
         if: steps.diff.outputs.has_changes == 'true'
@@ -149,7 +168,39 @@ jobs:
           REVIEW_MD:   .sentinel/reviews/${{ matrix.profile }}/review.human.md
           PROFILE:     ${{ matrix.profile }}
           FAIL_ON:     ${{ inputs.fail_on || 'major' }}
+          RUN_AT_UTC:  ${{ env.RUN_AT_UTC }}
         run: node scripts/post-results-to-github.cjs
+
+      # ─── S3: без references к secrets.* в if; проверяем всё в bash ───
+      - name: Sync to S3 (optional)
+        if: steps.diff.outputs.has_changes == 'true'
+        env:
+          # fork-флаг (пусто для non-PR — трактуем как false)
+          IS_FORK: ${{ github.event.pull_request.head.repo.fork }}
+          AWS_REGION:            ${{ secrets.AWS_REGION }}
+          AWS_ACCESS_KEY_ID:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          S3_BUCKET:             ${{ secrets.S3_BUCKET }}
+          S3_PREFIX:             ${{ secrets.S3_PREFIX }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # guard: форки и/или отсутствующие секреты
+          if [ "${IS_FORK:-false}" = "true" ] || [ -z "${AWS_ACCESS_KEY_ID:-}" ] || [ -z "${AWS_SECRET_ACCESS_KEY:-}" ] || [ -z "${S3_BUCKET:-}" ]; then
+            echo "S3 sync skipped (fork or missing secrets)."
+            exit 0
+          fi
+
+          pipx install awscli
+
+          ORG="${{ github.repository_owner }}"
+          REPO="$(echo '${{ github.repository }}' | cut -d'/' -f2)"
+          PR="${{ github.event.pull_request.number || '' }}"
+          RUN="${{ github.run_id }}"
+          PREFIX="${S3_PREFIX:-sentinel}/${ORG}/${REPO}/${PR:-branch}/${RUN}"
+
+          echo "Syncing .sentinel → s3://${S3_BUCKET}/${PREFIX}"
+          aws s3 sync .sentinel "s3://${S3_BUCKET}/${PREFIX}" --no-progress
 
       - name: Upload artifacts (${{ matrix.profile }})
         if: always()
