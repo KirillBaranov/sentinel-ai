@@ -126,6 +126,8 @@ program
   .option("--provider <name>", "provider: local|mock|openai|claude")
   .option("--fail-on <level>", "none|major|critical (exit policy)")
   .option("--max-comments <n>", "cap number of findings")
+  .option("--out-json <path>", "override review.json output path (abs or repo-root relative)")
+  .option("--out-md <path>",   "override review.md output path (abs or repo-root relative)")
   .option("--analytics", "enable analytics (file JSONL sink)")
   .option("--analytics-out <dir>", "analytics output dir (overrides rc.analytics.outDir)")
   .option("--debug", "verbose debug logs", false)
@@ -142,7 +144,6 @@ program
       provider: opts.provider,
       failOn: opts.failOn,
       maxComments,
-      // остальные поля из файла rc / env
     });
 
     const diff = opts.diff as string;
@@ -155,15 +156,20 @@ program
     try {
       const diffPath = path.isAbsolute(diff) ? diff : path.join(REPO_ROOT, diff);
 
-      // директория профиля для артефактов ревью
+      // базовая директория артефактов для профиля
       const reviewDirAbs = path.join(rc.out.reviewsDirAbs, rc.profile);
       fs.mkdirSync(reviewDirAbs, { recursive: true });
 
-      const outJson = path.join(reviewDirAbs, rc.out.jsonName);
-      const outMd = path.join(reviewDirAbs, rc.out.mdName);
+      // пути вывода: CLI > по умолчанию из rc
+      const outJson = opts.outJson
+        ? (path.isAbsolute(opts.outJson) ? opts.outJson : path.join(REPO_ROOT, opts.outJson))
+        : path.join(reviewDirAbs, rc.out.jsonName);
 
-      // приоритеты аналитики:
-      // enabled: CLI (--analytics) > rc.analytics.enabled > ENV
+      const outMd = opts.outMd
+        ? (path.isAbsolute(opts.outMd) ? opts.outMd : path.join(REPO_ROOT, opts.outMd))
+        : path.join(reviewDirAbs, rc.out.mdName);
+
+      // аналитика: enabled и outDir с учётом CLI
       const analyticsEnabled =
         typeof opts.analytics === "boolean"
           ? opts.analytics
@@ -171,7 +177,6 @@ program
             process.env.SENTINEL_ANALYTICS === "1" ||
             process.env.SENTINEL_ANALYTICS === "true";
 
-      // out: CLI (--analytics-out) > rc.analytics.outDir (в rc уже абсолютный)
       const analyticsOut: string | undefined =
         (typeof opts.analyticsOut === "string" && opts.analyticsOut
           ? (path.isAbsolute(opts.analyticsOut)
@@ -191,7 +196,7 @@ program
         analytics: analyticsEnabled,
         analyticsOut,
         debug: !!opts.debug,
-        rc, // пробрасываем целиком (рантайм аналитики читает, если нужно)
+        rc,
       });
     } catch (e: any) {
       if (/Profile .* not found/.test(String(e?.message))) {
