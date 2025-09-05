@@ -27,37 +27,15 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  gate:
-    name: Decide whether to run
+  detect-profiles:
     runs-on: ubuntu-latest
     outputs:
-      run: ${{ steps.decide.outputs.run }}
-      profiles: ${{ steps.profiles.outputs.matrix }}
+      matrix: ${{ steps.mk.outputs.matrix }}
     steps:
-      - id: decide
-        shell: bash
-        run: |
-          ev="${{ github.event_name }}"
-          run="false"
-          if [ "$ev" = "workflow_dispatch" ]; then
-            run="true"
-          elif [ "$ev" = "pull_request" ]; then
-            action="${{ github.event.action }}"
-            labels='${{ toJson(github.event.pull_request.labels) }}'
-            if echo "$labels" | grep -qi '"name":"ai-review"'; then
-              run="true"
-            elif [ "$action" = "opened" ] || [ "$action" = "reopened" ]; then
-              run="true"
-            fi
-          fi
-          echo "run=$run" >> "$GITHUB_OUTPUT"
-
       - uses: actions/checkout@v4
-        if: steps.decide.outputs.run == 'true'
         with: { fetch-depth: 0 }
 
-      - id: profiles
-        if: steps.decide.outputs.run == 'true'
+      - id: mk
         shell: bash
         run: |
           set -euo pipefail
@@ -75,17 +53,17 @@ jobs:
           echo "matrix=$JSON" >> "$GITHUB_OUTPUT"
 
   review:
-    needs: gate
-    if: needs.gate.outputs.run == 'true'
+    needs: detect-profiles
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      matrix: ${{ fromJson(needs.gate.outputs.profiles) }}
+      matrix: ${{ fromJSON(needs.detect-profiles.outputs.matrix) }}
 
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
 
+      # pnpm версию берём из package.json ("packageManager")
       - uses: pnpm/action-setup@v4
         with: { run_install: false }
 
@@ -103,6 +81,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p .sentinel/reviews
+
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             BASE="${{ github.event.pull_request.base.sha }}"
             HEAD="${{ github.event.pull_request.head.sha }}"
@@ -112,10 +91,13 @@ jobs:
             BASE="$(git merge-base "origin/${DEFAULT_BRANCH}" HEAD)"
             HEAD="HEAD"
           fi
+
           git diff --no-color --unified=0 "$BASE...$HEAD" > .sentinel/reviews/changes.diff || true
+
           if [ -s .sentinel/reviews/changes.diff ]; then
             echo "has_changes=true" >> "$GITHUB_OUTPUT"
           else
+            echo "No changes."
             echo "has_changes=false" >> "$GITHUB_OUTPUT"
           fi
 
@@ -129,6 +111,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p ".sentinel/reviews/${SENTINEL_PROFILE}"
+
           pnpm sentinel:review -- --diff .sentinel/reviews/changes.diff \
             --profile "${SENTINEL_PROFILE}" \
             --out-json ".sentinel/reviews/${SENTINEL_PROFILE}/review.json" \
