@@ -4,7 +4,7 @@ on:
   pull_request:
     types: [opened, reopened, synchronize, labeled]
   issue_comment:
-    types: [created]          # поддержка запуска комментом /review
+    types: [created]                     # запуск через комментарий /review
   workflow_dispatch:
     inputs:
       profiles:
@@ -24,7 +24,6 @@ permissions:
   checks: write
   pull-requests: write
 
-# легко меняется имя метки тут
 env:
   REVIEW_LABEL: ai-review
 
@@ -34,83 +33,103 @@ concurrency:
 
 jobs:
   gate:
-    name: Decide whether to run
+    name: Decide whether to run (with debug)
     runs-on: ubuntu-latest
     outputs:
-      run: ${{ steps.decide.outputs.run }}
-      profiles: ${{ steps.profiles.outputs.matrix }}
-      pr_number: ${{ steps.prmeta.outputs.pr_number }}
-      head_sha: ${{ steps.prmeta.outputs.head_sha }}
-      base_sha: ${{ steps.prmeta.outputs.base_sha }}
+      run:       ${{ steps.decide.outputs.run }}
+      reason:    ${{ steps.decide.outputs.reason }}
+      profiles:  ${{ steps.profiles.outputs.matrix }}
+      pr_number: ${{ steps.decide.outputs.pr_number }}
+      head_sha:  ${{ steps.decide.outputs.head_sha }}
+      base_sha:  ${{ steps.decide.outputs.base_sha }}
+
     steps:
-      # 0) Сохраним метаданные PR для issue_comment (и заодно для PR)
-      - name: Collect PR meta
-        id: prmeta
+      - name: Decide
+        id: decide
         uses: actions/github-script@v7
         with:
           script: |
-            const isPR = !!(context.payload.pull_request) || !!(context.payload.issue && context.payload.issue.pull_request);
-            if (!isPR) {
-              core.setOutput('pr_number', '');
-              core.setOutput('head_sha', '');
-              core.setOutput('base_sha', '');
-              return;
+            const REVIEW_LABEL = process.env.REVIEW_LABEL || 'ai-review';
+            const ev = context.eventName;
+            const action = context.payload.action;
+            const labelName = context.payload.label?.name;
+            let run = false;
+            let reason = 'no-match';
+            let prNumber = null, headSha = null, baseSha = null;
+
+            // helper: fetch PR (works for pull_request & issue_comment)
+            async function fetchPR() {
+              const num =
+                context.payload.pull_request?.number ??
+                context.payload.issue?.number ??
+                null;
+              if (!num) return null;
+              const { data: pr } = await github.rest.pulls.get({
+                owner: context.repo.owner, repo: context.repo.repo, pull_number: num
+              });
+              return pr;
             }
-            const prNumber = context.payload.pull_request?.number ?? context.payload.issue.number;
-            const { data: pr } = await github.rest.pulls.get({
-              owner: context.repo.owner, repo: context.repo.repo, pull_number: prNumber
-            });
-            core.setOutput('pr_number', String(pr.number));
-            core.setOutput('head_sha', pr.head.sha);
-            core.setOutput('base_sha', pr.base.sha);
 
-      # 1) Решение: когда запускать
-      - id: decide
-        shell: bash
-        env:
-          EV: ${{ github.event_name }}
-          ACTION: ${{ github.event.action }}
-          LABEL_NAME: ${{ github.event.label.name }}
-          REVIEW_LABEL: ${{ env.REVIEW_LABEL }}
-          PR_HAS_LABELS: ${{ toJson(github.event.pull_request.labels) }}
-        run: |
-          set -euo pipefail
-          run=false
+            if (ev === 'workflow_dispatch') {
+              run = true; reason = 'workflow_dispatch';
+            } else if (ev === 'pull_request') {
+              const pr = await fetchPR();
+              if (pr) {
+                prNumber = pr.number;
+                headSha = pr.head.sha;
+                baseSha = pr.base.sha;
+              }
+              if (action === 'opened' || action === 'reopened') {
+                run = true; reason = `pull_request:${action}`;
+              } else if (action === 'labeled' && labelName === REVIEW_LABEL) {
+                run = true; reason = `pull_request:labeled:${labelName}`;
+              } else if (action === 'synchronize') {
+                // на synchronize смотрим ТЕКУЩИЕ метки PR
+                const has = (pr?.labels || []).some(l => (l?.name||'').toLowerCase() === REVIEW_LABEL.toLowerCase());
+                if (has) { run = true; reason = 'pull_request:synchronize+label-present'; }
+              }
+            } else if (ev === 'issue_comment') {
+              // триггер из комментария
+              const isPR = !!context.payload.issue?.pull_request;
+              const body = (context.payload.comment?.body || '').trim();
+              if (isPR && /^\/(sentinel\s+)?review\b/i.test(body)) {
+                const pr = await fetchPR();
+                if (pr) {
+                  prNumber = pr.number;
+                  headSha = pr.head.sha;
+                  baseSha = pr.base.sha;
+                  run = true; reason = 'issue_comment:/review';
+                }
+              }
+            }
 
-          echo "event=$EV action=$ACTION label=$LABEL_NAME review_label=$REVIEW_LABEL"
+            core.summary
+              .addHeading('Gate decision')
+              .addTable([
+                [{data:'Key',header:true},{data:'Value',header:true}],
+                ['event', ev],
+                ['action', action ?? '—'],
+                ['labelName', labelName ?? '—'],
+                ['REVIEW_LABEL', REVIEW_LABEL],
+                ['run', String(run)],
+                ['reason', reason],
+                ['pr_number', String(prNumber ?? '—')],
+                ['head_sha', headSha ?? '—'],
+                ['base_sha', baseSha ?? '—'],
+              ])
+              .write();
 
-          if [ "$EV" = "workflow_dispatch" ]; then
-            run=true
-          elif [ "$EV" = "pull_request" ]; then
-            # запускаем:
-            #  - при первом открытии/переоткрытии
-            #  - когда добавили нужный лейбл
-            #  - на synchronize, если PR уже помечен нужным лейблом
-            if [ "$ACTION" = "opened" ] || [ "$ACTION" = "reopened" ]; then
-              run=true
-            elif [ "$ACTION" = "labeled" ] && [ "${LABEL_NAME:-}" = "$REVIEW_LABEL" ]; then
-              run=true
-            elif [ "$ACTION" = "synchronize" ]; then
-              # проверим наличие метки в текущем списке
-              if echo "$PR_HAS_LABELS" | grep -qi "\"name\":\"$REVIEW_LABEL\""; then
-                run=true
-              fi
-            fi
-          elif [ "$EV" = "issue_comment" ]; then
-            # разрешаем только для PR и только на команду /review (или /sentinel review)
-            body='${{ github.event.comment.body }}'
-            is_pr='${{ !!github.event.issue.pull_request }}'
-            if [ "$is_pr" = "true" ]; then
-              if echo "$body" | grep -Eqi '^\s*/(sentinel\s+)?review(\b|$)'; then
-                run=true
-              fi
-            fi
-          fi
+            core.setOutput('run', run ? 'true' : 'false');
+            core.setOutput('reason', reason);
+            if (prNumber) core.setOutput('pr_number', String(prNumber));
+            if (headSha)  core.setOutput('head_sha', headSha);
+            if (baseSha)  core.setOutput('base_sha', baseSha);
 
-          echo "run=$run" >> "$GITHUB_OUTPUT"
-          echo "Decision: run=$run"
+      - name: Checkout (for profiles detection)
+        if: steps.decide.outputs.run == 'true'
+        uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
 
-      # 2) Определяем профили
       - name: Detect profiles
         if: steps.decide.outputs.run == 'true'
         id: profiles
@@ -127,7 +146,7 @@ jobs:
             done
           fi
           [ ${#ARR[@]} -eq 0 ] && ARR+=(frontend)
-          printf 'Detected profiles: %s\n' "${ARR[*]}"
+          echo "Detected profiles: ${ARR[*]}"
           JSON=$(printf '%s\n' "${ARR[@]}" | jq -R . | jq -cs '{profile: .}')
           echo "matrix=$JSON" >> "$GITHUB_OUTPUT"
 
@@ -138,8 +157,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.gate.outputs.profiles) }}
+
     steps:
-      # checkout: для issue_comment берём head-ветку PR, иначе обычный
+      # если запуск из комментария — чекаутим head PR напрямую
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -149,9 +169,7 @@ jobs:
         with: { run_install: false }
 
       - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: pnpm
+        with: { node-version: 20, cache: pnpm }
 
       - run: pnpm install --frozen-lockfile
       - run: pnpm -r run build
@@ -160,17 +178,14 @@ jobs:
         id: diff
         shell: bash
         env:
-          EV: ${{ github.event_name }}
           PR_BASE: ${{ needs.gate.outputs.base_sha }}
           PR_HEAD: ${{ needs.gate.outputs.head_sha }}
         run: |
           set -euo pipefail
           mkdir -p .sentinel/reviews
-
-          if [ -n "$PR_BASE" ] && [ -n "$PR_HEAD" ]; then
-            BASE="$PR_BASE"
-            HEAD="$PR_HEAD"
-          elif [ "$EV" = "pull_request" ]; then
+          if [ -n "${PR_BASE}" ] && [ -n "${PR_HEAD}" ]; then
+            BASE="${PR_BASE}"; HEAD="${PR_HEAD}"
+          elif [ "${{ github.event_name }}" = "pull_request" ]; then
             BASE="${{ github.event.pull_request.base.sha }}"
             HEAD="${{ github.event.pull_request.head.sha }}"
           else
@@ -179,9 +194,9 @@ jobs:
             BASE="$(git merge-base "origin/${DEFAULT_BRANCH}" HEAD)"
             HEAD="HEAD"
           fi
-
+          echo "BASE=$BASE"
+          echo "HEAD=$HEAD"
           git diff --no-color --unified=0 "$BASE...$HEAD" > .sentinel/reviews/changes.diff || true
-
           if [ -s .sentinel/reviews/changes.diff ]; then
             echo "has_changes=true" >> "$GITHUB_OUTPUT"
           else
@@ -197,7 +212,6 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p ".sentinel/reviews/${SENTINEL_PROFILE}"
-
           pnpm sentinel:review -- --diff .sentinel/reviews/changes.diff \
             --profile "${SENTINEL_PROFILE}" \
             --out-json ".sentinel/reviews/${SENTINEL_PROFILE}/review.json" \
