@@ -1,0 +1,173 @@
+name: Sentinel Review (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      profiles:
+        description: "Comma-separated profiles (e.g. frontend,backend). If empty, auto-detects from packages/profiles/*"
+        required: false
+        type: string
+      max_comments:
+        description: "Inline annotations cap"
+        required: false
+        default: "30"
+        type: string
+      fail_on:
+        description: "none|major|critical"
+        required: false
+        default: "major"
+        type: string
+
+permissions:
+  contents: read
+  checks: write
+  pull-requests: write
+
+concurrency:
+  group: review-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  detect-profiles:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.mk.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+
+      - id: mk
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          RAW="${{ inputs.profiles || '' }}"
+          if [ -n "$RAW" ]; then
+            IFS=',' read -ra ARR <<< "$RAW"
+          else
+            ARR=()
+            for d in packages/profiles/*; do
+              [ -d "$d" ] && ARR+=("$(basename "$d")")
+            done
+          fi
+
+          # fallback если пусто
+          if [ ${#ARR[@]} -eq 0 ]; then ARR+=(frontend); fi
+
+          echo "Detected profiles: ${ARR[*]}"
+
+          # ожидаем объект { "profile": ["frontend","backend"] }
+          JSON=$(printf '%s\n' "${ARR[@]}" | jq -R . | jq -cs '{profile: .}')
+          echo "matrix=$JSON" >> "$GITHUB_OUTPUT"
+
+  review:
+    needs: detect-profiles
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.detect-profiles.outputs.matrix) }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+
+      # pnpm версию берём из package.json ("packageManager")
+      - uses: pnpm/action-setup@v4
+        with: { run_install: false }
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r run build
+
+      - name: Build diff
+        id: diff
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .sentinel/reviews
+
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="${{ github.event.pull_request.base.sha }}"
+            HEAD="${{ github.event.pull_request.head.sha }}"
+          else
+            DEFAULT_BRANCH="${{ github.event.repository.default_branch }}"
+            git fetch origin "${DEFAULT_BRANCH}" --depth=1
+            BASE="$(git merge-base "origin/${DEFAULT_BRANCH}" HEAD)"
+            HEAD="HEAD"
+          fi
+
+          git diff --no-color --unified=0 "$BASE...$HEAD" > .sentinel/reviews/changes.diff || true
+
+          if [ -s .sentinel/reviews/changes.diff ]; then
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No changes."
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run review (${{ matrix.profile }})
+        if: steps.diff.outputs.has_changes == 'true'
+        env:
+          SENTINEL_PROFILE: ${{ matrix.profile }}
+          SENTINEL_ANALYTICS: '1'
+          SENTINEL_ANALYTICS_DIR: .sentinel/analytics
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ".sentinel/reviews/${SENTINEL_PROFILE}"
+
+          pnpm -F @sentinel/cli exec node dist/index.js review \
+            --diff .sentinel/reviews/changes.diff \
+            --profile "${SENTINEL_PROFILE}" \
+            --out-json ".sentinel/reviews/${SENTINEL_PROFILE}/review.json" \
+            --out-md   ".sentinel/reviews/${SENTINEL_PROFILE}/review.md" \
+            --fail-on "${{ inputs.fail_on }}" \
+            --max-comments "${{ inputs.max_comments }}"
+
+      - name: Render Markdown (${{ matrix.profile }})
+        if: steps.diff.outputs.has_changes == 'true'
+        shell: bash
+        run: |
+          pnpm -F @sentinel/cli exec node dist/index.js render-md \
+            --in  ".sentinel/reviews/${{ matrix.profile }}/review.json" \
+            --out ".sentinel/reviews/${{ matrix.profile }}/review.human.md"
+
+      - name: Render HTML (${{ matrix.profile }})
+        if: steps.diff.outputs.has_changes == 'true'
+        shell: bash
+        run: |
+          pnpm -F @sentinel/cli exec node dist/index.js render-html \
+            --in  ".sentinel/reviews/${{ matrix.profile }}/review.json" \
+            --out ".sentinel/reviews/${{ matrix.profile }}/review.html"
+
+      - name: Ingest + Export analytics
+        if: steps.diff.outputs.has_changes == 'true'
+        run: |
+          pnpm -F @sentinel/cli exec node dist/index.js analytics:ingest
+          pnpm -F @sentinel/cli exec node dist/index.js analytics:export
+
+      - name: Publish GitHub Check + sticky comment (${{ matrix.profile }})
+        if: steps.diff.outputs.has_changes == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REVIEW_JSON: .sentinel/reviews/${{ matrix.profile }}/review.json
+          PROFILE: ${{ matrix.profile }}
+          FAIL_ON: ${{ inputs.fail_on }}
+        run: node scripts/post-results-to-github.cjs
+
+      - name: Upload artifacts (${{ matrix.profile }})
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sentinel-artifacts-${{ matrix.profile }}
+          path: |
+            .sentinel/reviews/${{ matrix.profile }}/review.json
+            .sentinel/reviews/${{ matrix.profile }}/review.md
+            .sentinel/reviews/${{ matrix.profile }}/review.human.md
+            .sentinel/reviews/${{ matrix.profile }}/review.html
+            .sentinel/analytics/**
+          if-no-files-found: ignore

@@ -1,0 +1,31 @@
+# .github/workflows/sentinel-review-comment.yml
+name: Sentinel Review (on comment)
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  checks: write
+  pull-requests: write
+
+jobs:
+  dispatch:
+    if: github.event.issue.pull_request && startsWith(github.event.comment.body, '/sentinel review')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Parse profiles from comment
+        id: parse
+        run: |
+          BODY="${{ github.event.comment.body }}"
+          # Формат: /sentinel review frontend,backend
+          PROFILES=$(echo "$BODY" | sed -n 's#^/sentinel review[[:space:]]*##p' | tr -d '\r' | tr -d '\n')
+          echo "profiles=$PROFILES" >> "$GITHUB_OUTPUT"
+
+      - name: Call main workflow (reusable)
+        uses: ./.github/workflows/sentinel-review-reusable.yml
+        with:
+          profiles: "${{ steps.parse.outputs.profiles }}"
+          max_comments: "30"
+          fail_on: "major"
