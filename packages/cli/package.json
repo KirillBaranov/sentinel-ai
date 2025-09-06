@@ -2,13 +2,22 @@
   "name": "@sentinel/cli",
   "version": "0.1.0",
   "type": "module",
-  "bin": { "sentinel": "./dist/index.js" },
+  "bin": {
+    "sentinel": "./dist/index.js"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
-    ".": { "import": "./dist/index.js", "types": "./dist/index.d.ts" }
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
   },
-  "files": ["dist", "README.md", "LICENSE"],
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "sideEffects": false,
   "scripts": {
     "clean": "rimraf dist",
@@ -19,13 +28,15 @@
     "test": "vitest"
   },
   "dependencies": {
-    "@sentinel/core": "workspace:*",
-    "@sentinel/provider-types": "workspace:*",
-    "@sentinel/provider-mock": "workspace:*",
-    "@sentinel/provider-local": "workspace:*",
     "@sentinel/analytics": "workspace:*",
+    "@sentinel/core": "workspace:*",
+    "@sentinel/provider-local": "workspace:*",
+    "@sentinel/provider-mock": "workspace:*",
+    "@sentinel/provider-openai": "workspace:*",
+    "@sentinel/provider-types": "workspace:*",
+    "colorette": "^2.0.20",
     "commander": "^12.1.0",
-    "colorette": "^2.0.20"
+    "dotenv": "^17.2.2"
   },
   "devDependencies": {
     "rimraf": "^6.0.1",
