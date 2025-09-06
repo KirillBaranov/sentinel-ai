@@ -59,7 +59,6 @@ jobs:
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.detect-profiles.outputs.matrix) }}
-
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
@@ -110,14 +109,11 @@ jobs:
           pnpm -F @sentinel/cli exec node dist/index.js review \
             --diff .sentinel/reviews/changes.diff \
             --profile "${SENTINEL_PROFILE}" \
-            --out-json ".sentinel/reviews/${SENTINEL_PROFILE}/review.json" \
-            --out-md   ".sentinel/reviews/${SENTINEL_PROFILE}/review.md" \
             --fail-on "${{ inputs.fail_on }}" \
             --max-comments "${{ inputs.max_comments }}"
 
       - name: Render Markdown (${{ matrix.profile }})
         if: steps.diff.outputs.has_changes == 'true'
-        shell: bash
         run: |
           pnpm -F @sentinel/cli exec node dist/index.js render-md \
             --in  ".sentinel/reviews/${{ matrix.profile }}/review.json" \
@@ -125,7 +121,6 @@ jobs:
 
       - name: Render HTML (${{ matrix.profile }})
         if: steps.diff.outputs.has_changes == 'true'
-        shell: bash
         run: |
           pnpm -F @sentinel/cli exec node dist/index.js render-html \
             --in  ".sentinel/reviews/${{ matrix.profile }}/review.json" \

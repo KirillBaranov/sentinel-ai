@@ -1,4 +1,3 @@
-# .github/workflows/sentinel-review-comment.yml
 name: Sentinel Review (on comment)
 
 on:
@@ -19,7 +18,6 @@ jobs:
         id: parse
         run: |
           BODY="${{ github.event.comment.body }}"
-          # Формат: /sentinel review frontend,backend
           PROFILES=$(echo "$BODY" | sed -n 's#^/sentinel review[[:space:]]*##p' | tr -d '\r' | tr -d '\n')
           echo "profiles=$PROFILES" >> "$GITHUB_OUTPUT"
 
@@ -29,3 +27,4 @@ jobs:
           profiles: "${{ steps.parse.outputs.profiles }}"
           max_comments: "30"
           fail_on: "major"
+        secrets: inherit
