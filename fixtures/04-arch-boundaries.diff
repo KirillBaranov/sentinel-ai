@@ -1,0 +1,17 @@
+diff --git a/packages/app/src/feature-a/Widget.ts b/packages/app/src/feature-a/Widget.ts
+index 7777777..8888888 100644
+--- a/packages/app/src/feature-a/Widget.ts
++++ b/packages/app/src/feature-a/Widget.ts
+@@ -1,5 +1,14 @@
+ // feature-a public API
+ export function renderA() {
+   return 'A';
+ }
++
++// ❌ Cross-feature internal import (violates boundaries)
++// feature-b/internal is not allowed; use a shared adapter/port instead
++import { privateBUtil } from '../feature-b/internal/privateUtil';
++
++export function risky() {
++  return privateBUtil('secret');
++}

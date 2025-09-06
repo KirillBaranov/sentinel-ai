@@ -1,0 +1,13 @@
+diff --git a/packages/ui/src/components/HtmlBlock.tsx b/packages/ui/src/components/HtmlBlock.tsx
+index 9999999..aaaaaaa 100644
+--- a/packages/ui/src/components/HtmlBlock.tsx
++++ b/packages/ui/src/components/HtmlBlock.tsx
+@@ -1,7 +1,18 @@
+ import React from 'react';
+
+ export function HtmlBlock({ raw }: { raw: string }) {
+-  return <div>{raw}</div>;
++  // ❌ Rendering untrusted HTML without sanitization
++  // If absolutely needed, sanitize first (DOMPurify, etc.)
++  return <div dangerouslySetInnerHTML={{ __html: raw }} />;
+ }
