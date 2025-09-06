@@ -50,27 +50,41 @@
     "clean:all": "rimraf node_modules packages/*/node_modules apps/*/node_modules dist .sentinel",
     "clean:analytics": "rimraf .sentinel/analytics dist/analytics dist/analytics-export",
 
+    "// ——— helpers": "────────────────────────────────────────",
+    "sentinel:diff": "scripts/make-diff.sh",
+
     "// ——— context": "────────────────────────────────────────",
     "sentinel:context:dev": "pnpm -F @sentinel/cli exec tsx src/index.ts build-context",
-    "sentinel:context":     "pnpm -r build && pnpm -F @sentinel/cli exec node dist/index.js build-context",
+    "sentinel:context": "pnpm -r build && pnpm -F @sentinel/cli exec node dist/index.js build-context",
 
-    "// ——— review": "────────────────────────────────────────",
-    "sentinel:review:dev":        "pnpm -F @sentinel/cli exec tsx src/index.ts review --diff fixtures/changes.diff",
-    "sentinel:review:nofail:dev": "pnpm -F @sentinel/cli exec tsx src/index.ts review --diff fixtures/changes.diff --fail-on none",
-    "sentinel:review":            "pnpm -r build && pnpm -F @sentinel/cli exec node dist/index.js review --diff fixtures/changes.diff",
+    "// ——— review (mock/local)": "────────────────────────────────────────",
+    "sentinel:review:dev": "pnpm -F @sentinel/cli exec tsx src/index.ts review --diff .sentinel/reviews/changes.diff",
+    "sentinel:review:debug": "SENTINEL_DEBUG_PROVIDER=1 pnpm -F @sentinel/cli exec tsx src/index.ts review --diff .sentinel/reviews/changes.diff --fail-on none",
+    "sentinel:review:openai:debug": "SENTINEL_DEBUG_PROVIDER=1 SENTINEL_PROVIDER=openai SENTINEL_MODEL=gpt-4o-mini pnpm -F @sentinel/cli exec tsx src/index.ts review --diff .sentinel/reviews/changes.diff --fail-on none",
+    "sentinel:review:nofail:dev": "pnpm -F @sentinel/cli exec tsx src/index.ts review --diff .sentinel/reviews/changes.diff --fail-on none",
+    "sentinel:review": "pnpm -r build && pnpm -F @sentinel/cli exec node dist/index.js review --diff .sentinel/reviews/changes.diff",
+    "sentinel:review:fx:all": "for f in 01-todo-and-hardcode 02-secrets-openai 03-perf-and-a11y 04-arch-boundaries 05-dangerous-inner-html; do SENTINEL_PROVIDER=openai pnpm -F @sentinel/cli exec tsx src/index.ts review --diff fixtures/$f.diff --fail-on none; done",
+
+    "// ——— review (OpenAI)": "────────────────────────────────────────",
+    "sentinel:review:openai:dev": "SENTINEL_PROVIDER=openai SENTINEL_MODEL=gpt-4o-mini pnpm -F @sentinel/cli exec tsx src/index.ts review --diff fixtures/changes.diff --fail-on none",
+    "sentinel:review:openai": "pnpm -r build && SENTINEL_PROVIDER=openai SENTINEL_MODEL=gpt-4o-mini pnpm -F @sentinel/cli exec node dist/index.js review --diff .sentinel/reviews/changes.diff --fail-on none",
 
     "// ——— render": "────────────────────────────────────────",
-    "sentinel:render-md:dev":   "pnpm -F @sentinel/cli exec tsx src/index.ts render-md --in .sentinel/reviews/review.json --out .sentinel/reviews/review.human.md",
-    "sentinel:render-md":       "pnpm -r build && SENTINEL_PROFILE=frontend pnpm -F @sentinel/cli exec node dist/index.js render-md",
-    "sentinel:render-html:dev": "pnpm -F @sentinel/cli exec tsx src/index.ts render-html --in .sentinel/reviews/review.json --out .sentinel/reviews/review.html",
-    "sentinel:render-html":     "pnpm -r build && SENTINEL_PROFILE=frontend pnpm -F @sentinel/cli exec node dist/index.js render-html",
+    "sentinel:render-md:dev": "SENTINEL_PROFILE=frontend pnpm -F @sentinel/cli exec tsx src/index.ts render-md",
+    "sentinel:render-md": "pnpm -r build && SENTINEL_PROFILE=frontend pnpm -F @sentinel/cli exec node dist/index.js render-md",
+    "sentinel:render-html:dev": "SENTINEL_PROFILE=frontend pnpm -F @sentinel/cli exec tsx src/index.ts render-html",
+    "sentinel:render-html": "pnpm -r build && SENTINEL_PROFILE=frontend pnpm -F @sentinel/cli exec node dist/index.js render-html",
 
     "// ——— analytics": "────────────────────────────────────────",
     "sentinel:analytics:ingest": "pnpm -F @sentinel/cli exec node dist/index.js analytics:ingest",
-    "sentinel:analytics:print":  "pnpm -F @sentinel/cli exec node dist/index.js analytics:print",
-    "sentinel:analytics:top":    "pnpm -F @sentinel/cli exec node dist/index.js analytics:top",
-    "sentinel:analytics:trend":  "pnpm -F @sentinel/cli exec node dist/index.js analytics:trend",
+    "sentinel:analytics:print": "pnpm -F @sentinel/cli exec node dist/index.js analytics:print",
+    "sentinel:analytics:top": "pnpm -F @sentinel/cli exec node dist/index.js analytics:top",
+    "sentinel:analytics:trend": "pnpm -F @sentinel/cli exec node dist/index.js analytics:trend",
     "sentinel:analytics:export": "pnpm -F @sentinel/cli exec node dist/index.js analytics:export",
+
+    "// ——— smoke flows": "────────────────────────────────────────",
+    "smoke:mock": "pnpm sentinel:diff && SENTINEL_PROVIDER=mock SENTINEL_PROFILE=frontend pnpm -F @sentinel/cli exec node dist/index.js review --diff .sentinel/reviews/changes.diff --fail-on none && pnpm -F @sentinel/cli exec node dist/index.js render-md && pnpm -F @sentinel/cli exec node dist/index.js render-html",
+    "smoke:openai": "pnpm sentinel:diff && SENTINEL_PROVIDER=openai SENTINEL_MODEL=gpt-4o-mini SENTINEL_PROFILE=frontend pnpm -F @sentinel/cli exec node dist/index.js review --diff .sentinel/reviews/changes.diff --fail-on none && pnpm -F @sentinel/cli exec node dist/index.js render-md && pnpm -F @sentinel/cli exec node dist/index.js render-html",
 
     "// ——— demos": "────────────────────────────────────────",
     "demo": "pnpm -F @sentinel/demo dev"
