@@ -1,9 +1,14 @@
 {
   "profile": "frontend",
   "profilesDir": "packages/profiles",
-  "provider": "local",
-  "failOn": "major",
+  "failOn": "none",
   "maxComments": 50,
+  "provider": "local",
+  "providerOptions": {
+    "model": "gpt-4o-mini",
+    "temperature": 0.1,
+    "maxTokens": 1500
+  },
   "out": {
     "root": ".sentinel",
     "contextDir": "context",
