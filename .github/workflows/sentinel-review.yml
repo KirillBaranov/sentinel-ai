@@ -27,17 +27,16 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Матрица профилей — как у тебя в рабочем варианте
+  # триггерим только когда действительно надо
   detect-profiles:
-    # Условие запуска job целиком: ручной запуск ИЛИ открытие/переоткрытие/синхронизация PR,
-    # ИЛИ событие labeled с label == ai-review
     if: |
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'pull_request' && (
         github.event.action == 'opened' ||
         github.event.action == 'reopened' ||
         github.event.action == 'synchronize' ||
-        (github.event.action == 'labeled' && github.event.label.name == 'ai-review')
+        (github.event.action == 'labeled'   && github.event.label.name == 'ai-review') ||
+        (github.event.action == 'unlabeled' && github.event.label.name == 'ai-review')
       ))
     runs-on: ubuntu-latest
     outputs:
@@ -75,7 +74,6 @@ jobs:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
 
-      # pnpm версию берём из package.json ("packageManager")
       - uses: pnpm/action-setup@v4
         with: { run_install: false }
 
@@ -93,7 +91,6 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p .sentinel/reviews
-
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             BASE="${{ github.event.pull_request.base.sha }}"
             HEAD="${{ github.event.pull_request.head.sha }}"
@@ -103,28 +100,73 @@ jobs:
             BASE="$(git merge-base "origin/${DEFAULT_BRANCH}" HEAD)"
             HEAD="HEAD"
           fi
-
           git diff --no-color --unified=0 "$BASE...$HEAD" > .sentinel/reviews/changes.diff || true
 
           if [ -s .sentinel/reviews/changes.diff ]; then
-            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+            echo "has_changes=true"  >> "$GITHUB_OUTPUT"
           else
-            echo "No changes."
             echo "has_changes=false" >> "$GITHUB_OUTPUT"
           fi
+          echo "BASE=$BASE HEAD=$HEAD"
+          wc -l .sentinel/reviews/changes.diff || true
 
       - name: Run review (${{ matrix.profile }})
         if: steps.diff.outputs.has_changes == 'true'
         env:
-          SENTINEL_PROFILE: ${{ matrix.profile }}
-          SENTINEL_ANALYTICS: '1'
+          SENTINEL_PROFILE:     ${{ matrix.profile }}
+          SENTINEL_ANALYTICS:   '1'
           SENTINEL_ANALYTICS_DIR: .sentinel/analytics
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p ".sentinel/reviews/${SENTINEL_PROFILE}"
-
-          pnpm sentinel:review -- --diff .sentinel/reviews/changes.diff \
+          # ⚠️ Больше НЕ передаём --out-json/--out-md: CLI сам кладёт файлы по rc
+          pnpm -F @sentinel/cli exec node dist/index.js review \
+            --diff .sentinel/reviews/changes.diff \
             --profile "${SENTINEL_PROFILE}" \
-            --out-json ".sentinel/reviews/${SENTINEL_PROFILE}/review.json" \
-            --out
+            --fail-on "${{ inputs.fail_on || 'major' }}" \
+            --max-comments "${{ inputs.max_comments || '30' }}"
+
+      - name: Render Markdown (${{ matrix.profile }})
+        if: steps.diff.outputs.has_changes == 'true'
+        run: |
+          pnpm -F @sentinel/cli exec node dist/index.js render-md \
+            --in  ".sentinel/reviews/${{ matrix.profile }}/review.json" \
+            --out ".sentinel/reviews/${{ matrix.profile }}/review.human.md"
+
+      - name: Render HTML (${{ matrix.profile }})
+        if: steps.diff.outputs.has_changes == 'true'
+        run: |
+          pnpm -F @sentinel/cli exec node dist/index.js render-html \
+            --in  ".sentinel/reviews/${{ matrix.profile }}/review.json" \
+            --out ".sentinel/reviews/${{ matrix.profile }}/review.html"
+
+      - name: Ingest + Export analytics
+        if: steps.diff.outputs.has_changes == 'true'
+        run: |
+          pnpm -F @sentinel/cli exec node dist/index.js analytics:indigest || pnpm -F @sentinel/cli exec node dist/index.js analytics:ingest
+          pnpm -F @sentinel/cli exec node dist/index.js analytics:export
+
+      - name: Publish GitHub Check + sticky comment (${{ matrix.profile }})
+        if: steps.diff.outputs.has_changes == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REVIEW_JSON: .sentinel/reviews/${{ matrix.profile }}/review.json
+          REVIEW_MD:   .sentinel/reviews/${{ matrix.profile }}/review.human.md
+          PROFILE:     ${{ matrix.profile }}
+          FAIL_ON:     ${{ inputs.fail_on || 'major' }}
+          RUN_AT_UTC:  ${{ env.RUN_AT_UTC }}
+        run: node scripts/post-results-to-github.cjs
+
+      - name: Upload artifacts (${{ matrix.profile }})
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sentinel-artifacts-${{ matrix.profile }}
+          path: |
+            .sentinel/reviews/${{ matrix.profile }}/review.json
+            .sentinel/reviews/${{ matrix.profile }}/review.md
+            .sentinel/reviews/${{ matrix.profile }}/review.human.md
+            .sentinel/reviews/${{ matrix.profile }}/review.html
+            .sentinel/analytics/**
+          if-no-files-found: ignore

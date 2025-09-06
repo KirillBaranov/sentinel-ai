@@ -10,10 +10,10 @@ if (!token) {
 }
 
 const REVIEW_JSON = process.env.REVIEW_JSON || '.sentinel/reviews/review.json';
-const REVIEW_MD   = process.env.REVIEW_MD; // optional: human MD preview
-const PROFILE     = process.env.PROFILE || 'default';
+const REVIEW_MD   = process.env.REVIEW_MD; // optional human-md preview
+const PROFILE     = process.env.PROFILE || process.env.SENTINEL_PROFILE || 'default';
 const FAIL_ON     = (process.env.FAIL_ON || 'major').toLowerCase(); // none|major|critical
-const RUN_AT_UTC  = process.env.RUN_AT_UTC || new Date().toISOString();
+const RUN_AT_UTC  = process.env.RUN_AT_UTC || ''; // optional timestamp from workflow
 
 if (!fs.existsSync(REVIEW_JSON)) {
   core.warning(`review.json not found: ${REVIEW_JSON} (profile=${PROFILE}). Skipping posting.`);
@@ -31,7 +31,9 @@ try {
 const findings = review?.ai_review?.findings || [];
 const counts = { critical: 0, major: 0, minor: 0, info: 0 };
 for (const f of findings) {
-  if (f?.severity && Object.prototype.hasOwnProperty.call(counts, f.severity)) counts[f.severity]++;
+  if (f?.severity && Object.prototype.hasOwnProperty.call(counts, f.severity)) {
+    counts[f.severity]++;
+  }
 }
 const total = findings.length;
 const max =
@@ -43,6 +45,7 @@ const max =
 function toConclusion(threshold) {
   if (threshold === 'none') return 'success';
   if (threshold === 'critical') return counts.critical > 0 ? 'failure' : 'success';
+  // default: 'major'
   return (counts.critical > 0 || counts.major > 0) ? 'failure' : 'success';
 }
 
@@ -56,63 +59,84 @@ if (REVIEW_MD && fs.existsSync(REVIEW_MD)) {
 
 const octo = github.getOctokit(token);
 const { owner, repo } = github.context.repo;
-const sha = github.context.payload?.pull_request?.head?.sha || github.context.sha;
-const prNumber = github.context.payload?.pull_request?.number;
+const shaFromCtx =
+  github.context.payload?.pull_request?.head?.sha ||
+  github.context.sha;
+
+async function detectPrNumber() {
+  if (github.context.payload?.pull_request?.number) {
+    return github.context.payload.pull_request.number;
+  }
+  if (github.context.issue?.number) {
+    return github.context.issue.number;
+  }
+  try {
+    const resp = await octo.rest.repos.listPullRequestsAssociatedWithCommit({
+      owner, repo, commit_sha: shaFromCtx,
+    });
+    const pr = resp?.data?.find(Boolean);
+    if (pr?.number) return pr.number;
+  } catch (e) {
+    core.info(`listPullRequestsAssociatedWithCommit failed: ${e?.message || e}`);
+  }
+  return null;
+}
 
 (async () => {
+  const prNumber = await detectPrNumber();
+  core.info(`[post-results] repo=${owner}/${repo}`);
+  core.info(`[post-results] sha=${shaFromCtx}`);
+  core.info(`[post-results] prNumber=${prNumber ?? 'null (not found)'}`);
+  core.info(`[post-results] profile=${PROFILE} fail_on=${FAIL_ON}`);
+  core.info(`[post-results] review_json=${REVIEW_JSON}`);
+  if (REVIEW_MD) core.info(`[post-results] review_md=${REVIEW_MD} (exists=${fs.existsSync(REVIEW_MD)})`);
+  if (RUN_AT_UTC) core.info(`[post-results] run_at=${RUN_AT_UTC}`);
+
   const title = `Sentinel Review — ${PROFILE}: ${total} findings (max=${max})`;
-  const summary = [
+  const lines = [
     `**Profile**: \`${PROFILE}\``,
-    `**Run at (UTC)**: ${RUN_AT_UTC}`,
     `**Findings**: ${total} (crit ${counts.critical}, major ${counts.major}, minor ${counts.minor}, info ${counts.info})`,
     `**Max severity**: \`${max}\``,
     `**Fail-on**: \`${FAIL_ON}\``,
+  ];
+  if (RUN_AT_UTC) lines.push(`**Run at**: ${new Date(RUN_AT_UTC).toISOString()}`);
+  lines.push('', `Artifacts: see workflow artifacts (prefix: \`sentinel-artifacts-${PROFILE}\`)`);
+
+  try {
+    await octo.rest.checks.create({
+      owner, repo,
+      name: `Sentinel Review — ${PROFILE}`,
+      head_sha: shaFromCtx,
+      status: 'completed',
+      conclusion: toConclusion(FAIL_ON),
+      output: { title, summary: lines.join('\n') },
+    });
+    core.info('[post-results] GitHub Check created.');
+  } catch (e) {
+    core.warning(`[post-results] Failed to create check: ${e?.message || e}`);
+  }
+
+  if (!prNumber) {
+    core.warning('[post-results] PR number is not found → skipping comment.');
+    return;
+  }
+
+  const marker = `<!-- sentinel-sticky-comment:${PROFILE} -->`;
+  const body = [
+    marker,
+    `### 🔎 Sentinel Review — \`${PROFILE}\``,
+    `**Findings**: ${total} (crit ${counts.critical}, major ${counts.major}, minor ${counts.minor}, info ${counts.info})`,
+    `**Max severity**: \`${max}\``,
+    `**Fail-on**: \`${FAIL_ON}\``,
+    RUN_AT_UTC ? `**Run at (UTC)**: ${new Date(RUN_AT_UTC).toISOString()}` : '',
     ``,
-    `Artifacts: see workflow artifacts (prefix: \`sentinel-artifacts-${PROFILE}\`)`,
+    `**Artifacts**:`,
+    `- Review JSON/MD/HTML: in workflow artifacts \`sentinel-artifacts-${PROFILE}\``,
+    `- Analytics exports: same artifact bundle`,
+    mdPreview ? `\n<details><summary>Preview (human MD)</summary>\n\n${mdPreview}\n\n</details>\n` : '',
   ].filter(Boolean).join('\n');
 
   try {
-    await core.summary
-      .addHeading(`Sentinel Review — ${PROFILE}`)
-      .addTable([
-        [{ data: 'Metric', header: true }, { data: 'Value', header: true }],
-        ['Run at (UTC)', RUN_AT_UTC],
-        ['Total findings', String(total)],
-        ['Critical', String(counts.critical)],
-        ['Major', String(counts.major)],
-        ['Minor', String(counts.minor)],
-        ['Info', String(counts.info)],
-        ['Max severity', max],
-        ['Fail-on', FAIL_ON],
-      ])
-      .write();
-  } catch (_) {}
-
-  await octo.rest.checks.create({
-    owner, repo,
-    name: `Sentinel Review — ${PROFILE}`,
-    head_sha: sha,
-    status: 'completed',
-    conclusion: toConclusion(FAIL_ON),
-    output: { title, summary },
-  });
-
-  if (prNumber) {
-    const marker = `<!-- sentinel-sticky-comment:${PROFILE} -->`;
-    const body = [
-      marker,
-      `### 🔎 Sentinel Review — \`${PROFILE}\``,
-      `**Run at (UTC)**: ${RUN_AT_UTC}`,
-      `**Findings**: ${total} (crit ${counts.critical}, major ${counts.major}, minor ${counts.minor}, info ${counts.info})`,
-      `**Max severity**: \`${max}\``,
-      `**Fail-on**: \`${FAIL_ON}\``,
-      ``,
-      `**Artifacts**:`,
-      `- Review JSON/MD/HTML: in workflow artifacts \`sentinel-artifacts-${PROFILE}\``,
-      `- Analytics exports: same artifact bundle`,
-      mdPreview ? `\n<details><summary>Preview (human MD)</summary>\n\n${mdPreview}\n\n</details>\n` : ''
-    ].join('\n');
-
     const comments = await octo.rest.issues.listComments({
       owner, repo, issue_number: prNumber, per_page: 100
     });
@@ -120,12 +144,15 @@ const prNumber = github.context.payload?.pull_request?.number;
 
     if (prev) {
       await octo.rest.issues.updateComment({ owner, repo, comment_id: prev.id, body });
+      core.info('[post-results] Sticky comment updated.');
     } else {
       await octo.rest.issues.createComment({ owner, repo, issue_number: prNumber, body });
+      core.info('[post-results] Sticky comment created.');
     }
+  } catch (e) {
+    core.setFailed(`[post-results] Failed to upsert sticky comment: ${e?.message || e}`);
+    process.exit(1);
   }
-
-  console.log(`Published check + sticky comment for profile "${PROFILE}".`);
 })().catch(err => {
   core.setFailed(err?.message || String(err));
   process.exit(1);
