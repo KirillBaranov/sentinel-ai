@@ -51,19 +51,24 @@
       "area": "Security",
       "severity": "critical",
       "description": "Do not commit secrets (API keys, tokens, private keys).",
-      "link": "docs/handbook/security.md#secrets",
-      "examples": {
-        "bad": ["const OPENAI_API_KEY = \"sk-...\""],
-        "good": ["process.env.OPENAI_API_KEY"]
-      },
-      "scope": ["changed", "file", "project"],
       "trigger": {
         "type": "hybrid",
-        "signals": ["regex:AKIA[0-9A-Z]{16}", "regex:sk-[A-Za-z0-9]{20,}", "regex:BEGIN PRIVATE KEY", "env.example-sync"]
+        "evidence": "added-only",
+        "requireSignalMatch": true,
+        "signals": [
+          "regex:AKIA[0-9A-Z]{16}",
+          "regex:sk-[A-Za-z0-9]{20,}",
+          "regex:BEGIN PRIVATE KEY"
+        ],
+        "exempt": [
+          "regex:\\bprocess\\.env\\.[A-Z0-9_]+\\b",
+          "regex:(?:import\\s+['\\\"]dotenv\\/config['\\\"])",
+          "regex:\\bdotenv\\.(?:config|load)\\b",
+          "regex:\\bloadEnv\\("
+        ]
       },
       "status": "active",
-      "version": 1,
-      "ask_feedback": true
+      "version": 1
     },
     {
       "id": "sec.unsafe-innerhtml",
@@ -216,15 +221,18 @@
       "area": "DX",
       "severity": "minor",
       "description": "Remove console debugging from production code unless behind env guard.",
-      "link": "docs/handbook/style.md#logging",
-      "examples": {
-        "bad": ["console.log('here')"],
-        "good": ["if (process.env.NODE_ENV !== 'production') console.debug(data)"]
-      },
-      "scope": ["changed"],
       "trigger": {
         "type": "pattern",
-        "signals": ["console.log", "console.debug", "console.trace"]
+        "evidence": "added-only",
+        "requireSignalMatch": true,
+        "signals": [
+          "added-line:console.log",
+          "added-line:console.debug",
+          "added-line:console.trace"
+        ],
+        "exempt": [
+          "regex:process\\.env\\.NODE_ENV\\s*!==?\\s*['\\\"]production['\\\"]"
+        ]
       },
       "status": "active",
       "version": 1

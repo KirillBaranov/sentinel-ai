@@ -18,11 +18,38 @@ import type { ProviderReviewInput, ReviewProvider } from '@sentinel/provider-typ
 /* ── tiny utils ────────────────────────────────────────────── */
 
 function extractDiffFiles(diff: string): string[] {
-  const set = new Set<string>();
-  const re = /^\+\+\+\s+b\/(.+)$/gm;
-  let m;
-  while ((m = re.exec(diff))) set.add(m[1].trim());
-  return Array.from(set);
+  const set = new Set<string>()
+  const re = /^\+\+\+\s+b\/(.+)$/gm
+  let m
+  while ((m = re.exec(diff))) set.add(m[1]!.trim())
+  return Array.from(set)
+}
+
+function addedLinesByFile(diff: string): Record<string, { line: number; text: string }[]> {
+  const out: Record<string, { line: number; text: string }[]> = {}
+  let file = ''
+  let newLine = 0
+  const lines = diff.split('\n')
+  for (const line of lines) {
+    if (line.startsWith('+++ b/')) {
+      file = line.slice(6).trim()
+      if (!out[file]) out[file] = []
+      continue
+    }
+    const m = line.match(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/)
+    if (m) {
+      newLine = Number(m[1])
+      continue
+    }
+    if (line.startsWith('+') && !line.startsWith('+++')) {
+      if (file) out[file]!.push({ line: newLine, text: line.slice(1) })
+      newLine++
+    } else if (!line.startsWith('-')) {
+      // context line
+      if (line && !line.startsWith('@@')) newLine++
+    }
+  }
+  return out
 }
 
 const sha1 = (s: string) => crypto.createHash('sha1').update(s).digest('hex')
@@ -39,16 +66,87 @@ const rulesCompact = (rules?: RulesJson | null) =>
         .join('\n')
     : '(none)'
 
+function ruleIds(rules?: RulesJson | null): string[] {
+  return (rules?.rules ?? []).map((r) => String(r.id))
+}
+
+/* ── constraints derived from rules.trigger ────────────────── */
+
+type RuleConstraint = {
+  id: string
+  area?: string
+  severity?: string
+  evidence?: 'added-only' | 'diff-any'
+  requireSignalMatch?: boolean
+  signals: string[]
+  exempt: string[]
+  file_glob?: string[]
+}
+
+function deriveRuleConstraints(rules?: RulesJson | null): RuleConstraint[] {
+  const out: RuleConstraint[] = []
+  if (!rules?.rules?.length) return out
+
+  for (const r of rules.rules) {
+    const t: any = r.trigger || {}
+    const rc: RuleConstraint = {
+      id: String(r.id),
+      area: r.area,
+      severity: r.severity,
+      evidence: t.evidence === 'diff-any' ? 'diff-any' : 'added-only',
+      requireSignalMatch: !!t.requireSignalMatch,
+      signals: Array.isArray(t.signals) ? t.signals.map(String) : [],
+      exempt: Array.isArray(t.exempt) ? t.exempt.map(String) : [],
+      file_glob: Array.isArray(t.file_glob) ? t.file_glob.map(String) : undefined,
+    }
+    out.push(rc)
+  }
+
+  return out
+}
+
+function formatRuleConstraints(rcs: RuleConstraint[]): string {
+  if (!rcs.length) return '(none)'
+  return rcs
+    .map((rc) => {
+      const lines = []
+      lines.push(`- rule: ${rc.id}`)
+      if (rc.area) lines.push(`  area: ${rc.area}`)
+      if (rc.severity) lines.push(`  severity: ${rc.severity}`)
+      lines.push(`  evidence: ${rc.evidence || 'added-only'}`)
+      lines.push(`  requireSignalMatch: ${rc.requireSignalMatch ? 'true' : 'false'}`)
+      if (rc.file_glob?.length) lines.push(`  file_glob:\n    - ${rc.file_glob.join('\n    - ')}`)
+      if (rc.signals.length) lines.push(`  signals:\n    - ${rc.signals.join('\n    - ')}`)
+      if (rc.exempt.length) lines.push(`  exempt:\n    - ${rc.exempt.join('\n    - ')}`)
+      return lines.join('\n')
+    })
+    .join('\n')
+}
+
+/* ── prompt builders ───────────────────────────────────────── */
+
 function buildSystemPrompt() {
   return [
     'You are a rigorous code review assistant.',
-    'Use the given CONTEXT (project handbook/rules/boundaries/ADR) to align suggestions.',
+    'Use ONLY the provided RULES and CONTEXT (team handbook, boundaries, ADRs).',
     'Given a unified DIFF, produce findings strictly as JSON.',
-    'Only report actionable issues visible in the diff.',
-    'Each finding must include: rule, area, severity, file, locator, finding[], why, suggestion.',
-    'locator: "HUNK:@@ -a,b +c,d @@" OR "L42" OR "L10-L20" OR "symbol:Name".',
-    'Each "finding[]" line must start with the locator in brackets, e.g. "[L45] message".',
-    'If there are no issues, return [].',
+    'Report ONLY issues explicitly evidenced in the DIFF under the constraints provided.',
+    'Prefer ADDED lines (prefixed with "+") as evidence unless a rule declares a wider scope.',
+    'Only report findings for files explicitly listed under DIFF_FILES.',
+    '',
+    'SIGNAL & EVIDENCE POLICY:',
+    '- For a rule with `requireSignalMatch=true`, at least one of its `signals` must literally match applicable text according to `evidence`.',
+    '- `evidence: "added-only"` → match inside ADDED lines.',
+    '- `evidence: "diff-any"` → match inside the diff (provider may still prioritize ADDED lines).',
+    '- Apply `exempt` patterns as allowlist: if an added line matches any `exempt` for the same rule, do not report it.',
+    '',
+    'OUTPUT RULES:',
+    '- Each finding must include: rule, area, severity, file, locator, finding[], why, suggestion.',
+    '- The "file" field MUST exactly match one of the DIFF_FILES.',
+    '- The "locator" must point to an added line or a hunk header (e.g., "HUNK:@@ -a,b +c,d @@", "L42", "L10-L20").',
+    '- Each "finding[]" item must start with the locator in brackets, e.g. "[L45] message", and quote the triggering text.',
+    '- If uncertain, return {"findings": []}.',
+    'Return a single JSON object with the key "findings" (an array).',
   ].join(' ')
 }
 
@@ -57,38 +155,58 @@ function buildUserPrompt(input: ProviderReviewInput) {
   const diff = input.diffText ?? ''
   const rulebook = rulesCompact(input.rules)
   const files = extractDiffFiles(diff)
+  const ids = ruleIds(input.rules)
+  const added = addedLinesByFile(diff)
+  const constraints = deriveRuleConstraints(input.rules)
+
+  const diffFilesSection = files.length
+    ? files.map((f) => `  - ${f}`).join('\n')
+    : '  (none)'
+  const addedSection = files
+    .map((f) => {
+      const rows = (added[f] || []).map((a) => `${a.line}: ${a.text}`).join('\n')
+      return `# ${f}\n${rows || '(no added lines)'}\n`
+    })
+    .join('\n')
 
   const hardConstraints = `
 STRICT CONSTRAINTS:
-- Only report findings for files from this allow-list:
-  DIFF_FILES:
-${files.map(f => `  - ${f}`).join('\n')}
-- If a potential issue is outside DIFF_FILES (e.g., handbook/rules/docs), DO NOT report it.
-- "file" must be EXACTLY one of DIFF_FILES; otherwise return [].
-- Prefer line locators from hunks, e.g. "HUNK:@@ -a,b +c,d @@" or "L42".
+- Report findings ONLY for files in DIFF_FILES.
+- Use ADDED lines as evidence unless a rule declares otherwise via "evidence".
+- Anchor each finding to actual lines with a precise locator.
+- Apply only the provided RULES; do not invent policies beyond them.
+- RULE_ID must be one of RULE_IDS exactly. If a rule cannot be satisfied under its constraints, do not report it.
+- When in doubt, return an empty findings list.
 `.trim()
 
-  const schemaHint = `
-Return ONLY valid JSON (UTF-8), no markdown, matching:
+  const constraintsText = formatRuleConstraints(constraints)
 
-[
-  {
-    "rule": "string",
-    "area": "string",
-    "severity": "critical|major|minor|info",
-    "file": "path/relative.ext",
-    "locator": "HUNK:@@ -a,b +c,d @@|Lnum|Lstart-Lend|symbol:Name",
-    "finding": ["[LOCATOR] message", "..."],
-    "why": "short explanation",
-    "suggestion": "short fix suggestion"
-  }
-]
+  const schemaHint = `
+Return ONLY valid JSON (UTF-8), no markdown:
+{
+  "findings": [
+    {
+      "rule": "<one of RULE_IDS>",
+      "area": "string",
+      "severity": "critical|major|minor|info",
+      "file": "path/relative.ext",
+      "locator": "HUNK:@@ -a,b +c,d @@|Lnum|Lstart-Lend|symbol:Name",
+      "finding": ["[LOCATOR] message", "..."],
+      "why": "short explanation citing the matched evidence",
+      "suggestion": "short fix suggestion"
+    }
+  ]
+}
 `.trim()
 
   return [
     hardConstraints,
-    `\nCONTEXT:\n${ctx.slice(0, 350_000)}`,
+    `\nRULE_IDS:\n${ids.map((i) => `  - ${i}`).join('\n') || '  (none)'}`,
+    `\nRULE_CONSTRAINTS (derived from rules.trigger):\n${constraintsText}`,
     `\nRULES (compact):\n${rulebook}`,
+    `\nCONTEXT:\n${ctx.slice(0, 300_000)}`,
+    `\nDIFF_FILES:\n${diffFilesSection}`,
+    `\nADDED_LINES (per-file):\n${addedSection}`,
     `\nDIFF (unified):\n${diff.slice(0, 200_000)}`,
     `\n${schemaHint}`,
   ].join('\n')
@@ -118,6 +236,37 @@ function debugDump(dir: string, name: string, data: any, asText = false) {
       atomicWrite(p, JSON.stringify(data, null, 2))
     }
   } catch {}
+}
+
+/* ── minimal signal check helpers (best-effort, per rule) ──── */
+
+function compileMatcher(signal: string): (s: string) => boolean {
+  if (signal.startsWith('regex:')) {
+    const pat = signal.slice(6)
+    const re = new RegExp(pat, 'm')
+    return (s: string) => re.test(s)
+  }
+  if (signal.startsWith('added-line:')) {
+    const lit = signal.slice(11)
+    return (s: string) => s.includes(lit)
+  }
+  if (signal.startsWith('pattern:')) {
+    const lit = signal.slice(8)
+    return (s: string) => s.includes(lit)
+  }
+  // default literal substring
+  return (s: string) => s.includes(signal)
+}
+
+function anyMatch(lines: string[], signals: string[]): boolean {
+  const matchers = signals.map(compileMatcher)
+  return lines.some((line) => matchers.some((m) => m(line)))
+}
+
+function anyExempt(lines: string[], exempts: string[]): boolean {
+  if (!exempts.length) return false
+  const matchers = exempts.map(compileMatcher)
+  return lines.some((line) => matchers.some((m) => m(line)))
 }
 
 /* ── OpenAI call ───────────────────────────────────────────── */
@@ -152,18 +301,16 @@ async function callOpenAI(
 
   if (debugDir) {
     debugDump(debugDir, '11.response.raw.json', resp)
-    const content = resp.choices?.[0]?.message?.content?.trim() || ''
-    debugDump(debugDir, '12.response.content.txt', content, true)
+    const contentPeek = resp.choices?.[0]?.message?.content?.slice(0, 2000) || ''
+    debugDump(debugDir, '12.response.content.peek.txt', contentPeek, true)
   }
 
   const content = resp.choices?.[0]?.message?.content?.trim() || ''
-  // try parse as object/array
   try {
     const parsed = JSON.parse(content)
     if (Array.isArray(parsed)) return parsed
     if (parsed && Array.isArray((parsed as any).findings)) return (parsed as any).findings
   } catch {}
-  // fallback to find JSON array in text
   const m = content.match(/\[\s*{[\s\S]*}\s*\]/)
   if (m) {
     try {
@@ -185,7 +332,7 @@ export const openaiProvider: ReviewProvider = {
     const temperature = input.providerOptions?.temperature ?? 0
     const maxTokens = input.providerOptions?.maxTokens
 
-    // debug toggle/dir (CLI уже передаёт input.debug; поддержим и env-флаг для удобства)
+    // debug toggle/dir
     const debugEnabled =
       !!input.debug?.enabled ||
       (process.env.SENTINEL_DEBUG_PROVIDER === '1' || process.env.SENTINEL_DEBUG_PROVIDER === 'true')
@@ -195,13 +342,16 @@ export const openaiProvider: ReviewProvider = {
         ? path.join(input.repoRoot, '.sentinel', 'reviews', input.profile || 'default', 'debug')
         : undefined)
 
-    // inputs (доступны в любом случае)
     const diff = input.diffText || ''
     const ctx = input.context?.markdown || ''
 
+    const files = extractDiffFiles(diff)
+    const ids = ruleIds(input.rules)
+    const added = addedLinesByFile(diff)
+    const constraints = deriveRuleConstraints(input.rules)
+
     if (debugEnabled && debugDir) {
       safeMkDir(debugDir)
-      // inputs
       debugDump(debugDir, '00.input.meta.json', {
         provider: 'openai',
         model,
@@ -219,14 +369,15 @@ export const openaiProvider: ReviewProvider = {
       debugDump(debugDir, '01.input.diff.unified.patch', diff, true)
       debugDump(debugDir, '02.input.context.md', ctx, true)
       debugDump(debugDir, '03.input.rules.compact.txt', rulesCompact(input.rules), true)
-      debugDump(debugDir, '04.input.diff.files.json', extractDiffFiles(diff))
+      debugDump(debugDir, '04.input.diff.files.json', files)
+      debugDump(debugDir, '05.input.rule_ids.json', ids)
+      debugDump(debugDir, '06.input.added_lines.json', added)
+      debugDump(debugDir, '07.input.rule_constraints.json', constraints)
     }
 
-    // prompts
     const systemPrompt = buildSystemPrompt()
     const userPrompt = buildUserPrompt(input)
 
-    // openai
     const raw = await callOpenAI(
       apiKey,
       model,
@@ -237,27 +388,66 @@ export const openaiProvider: ReviewProvider = {
       debugEnabled ? debugDir : undefined,
     )
 
-    // normalize findings
     const findings: ReviewFinding[] = []
     if (Array.isArray(raw)) {
-      for (const it of raw) {
+      for (const itRaw of raw) {
+        const it = itRaw as any
         const base = {
-          rule: String((it as any).rule ?? 'unknown'),
-          area: String((it as any).area ?? 'general'),
-          severity: (['critical', 'major', 'minor', 'info'] as Severity[]).includes(
-            (it as any).severity,
-          )
-            ? (it as any).severity
+          rule: String(it.rule ?? ''),
+          area: String(it.area ?? ''),
+          severity: (['critical', 'major', 'minor', 'info'] as Severity[]).includes(it.severity)
+            ? it.severity
             : ('minor' as Severity),
-          file: String((it as any).file ?? 'unknown'),
-          locator: String((it as any).locator ?? 'L0'),
-          finding: Array.isArray((it as any).finding)
-            ? (it as any).finding.map((s: any) => String(s))
-            : [],
-          why: String((it as any).why ?? ''),
-          suggestion: String((it as any).suggestion ?? ''),
+          file: String(it.file ?? ''),
+          locator: String(it.locator ?? ''),
+          finding: Array.isArray(it.finding) ? it.finding.map((s: any) => String(s)) : [],
+          why: String(it.why ?? ''),
+          suggestion: String(it.suggestion ?? ''),
         }
-        findings.push({ ...base, fingerprint: fp(base) })
+
+        if (!base.rule || !ids.includes(base.rule)) continue
+        if (!base.file || !files.includes(base.file)) continue
+
+        // Best-effort gating according to rule constraints
+        const rc = constraints.find((c) => c.id === base.rule)
+        const fileAdded = (added[base.file] || []).map((a) => a.text)
+
+        if (rc?.requireSignalMatch) {
+          // Evidence policy: currently we check ADDED lines for both modes (safe default).
+          const linesForCheck = fileAdded
+          const isExempt = rc.exempt?.length ? anyExempt(linesForCheck, rc.exempt) : false
+          const hasSignal = rc.signals?.length ? anyMatch(linesForCheck, rc.signals) : false
+          if (isExempt || !hasSignal) continue
+        }
+
+        console.log('hello-world')
+
+        // optional: ensure at least one finding item references an added line (best-effort)
+        const evidenceOK =
+          base.finding.length === 0
+            ? true
+            : base.finding.some((msg: any) => {
+                const stripped = String(msg).replace(/^\[[^\]]+\]\s*/, '')
+                return fileAdded.some((line) =>
+                  stripped.includes(line.slice(0, Math.min(20, line.length))),
+                )
+              })
+
+        if (!evidenceOK) continue
+
+        findings.push({
+          ...base,
+          fingerprint: fp({
+            rule: base.rule,
+            area: base.area || 'general',
+            severity: base.severity,
+            file: base.file,
+            locator: base.locator || 'L0',
+            finding: base.finding,
+            why: base.why,
+            suggestion: base.suggestion,
+          }),
+        })
       }
     }
 
@@ -265,16 +455,7 @@ export const openaiProvider: ReviewProvider = {
       debugDump(debugDir, '20.output.findings.json', findings)
     }
 
-    // allow-list by DIFF files (safety net)
-    const allowed = new Set(extractDiffFiles(diff))
-    const filtered = findings.filter(f => allowed.has(f.file) && (f.finding?.length ?? 0) > 0)
-    if (debugEnabled && debugDir) {
-      const dropped = findings.filter(f => !allowed.has(f.file))
-      debugDump(debugDir, '21.output.findings.filtered.json', filtered)
-      if (dropped.length) debugDump(debugDir, '22.output.findings.dropped.json', dropped)
-    }
-
-    return { ai_review: { version: 1 as const, run_id: `run_${Date.now()}`, findings: filtered } }
+    return { ai_review: { version: 1 as const, run_id: `run_${Date.now()}`, findings } }
   },
 }
 

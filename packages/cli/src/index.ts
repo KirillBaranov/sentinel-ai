@@ -1,8 +1,11 @@
-// packages/cli/src/index.ts
+import 'dotenv/config';
+
 import fs from "node:fs";
 import path from "node:path";
 import { Command } from "commander";
 import { bold, dim } from "colorette";
+
+import { config as loadEnv } from "dotenv";
 
 import { buildContextCLI } from "./context";
 import { runReviewCLI } from "./review";
@@ -29,6 +32,11 @@ import { registerAnalyticsCommands } from "./cmd/analytics";
 // Repo root (.git | pnpm-workspace.yaml | fallback)
 // ────────────────────────────────────────────────────────────────────────────────
 const REPO_ROOT = findRepoRoot();
+
+process.env.SENTINEL_REPO_ROOT ||= REPO_ROOT;
+
+loadEnv({ path: path.join(REPO_ROOT, ".env") });
+loadEnv();
 
 // Узкий локальный тип для чтения review.json (не тянем типы из core сюда)
 interface ReviewJson {
