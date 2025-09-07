@@ -3,7 +3,7 @@ import { defineConfig } from 'tsup'
 export default defineConfig({
   entry: {
     index: 'src/index.ts',
-    'scripts/validate-rules': 'src/scripts/validate-rules.ts',
+    // 'scripts/validate-rules': 'src/scripts/validate-rules.ts',
   },
   outDir: 'dist',
   format: ['esm'],
