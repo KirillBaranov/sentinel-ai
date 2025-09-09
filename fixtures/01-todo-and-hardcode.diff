@@ -1,0 +1,18 @@
+diff --git a/packages/ui/src/components/ProfileCard.tsx b/packages/ui/src/components/ProfileCard.tsx
+index 1111111..2222222 100644
+--- a/packages/ui/src/components/ProfileCard.tsx
++++ b/packages/ui/src/components/ProfileCard.tsx
+@@ -1,6 +1,13 @@
+ import React from 'react';
+
+ export function ProfileCard({ user }: { user: { name?: string } }) {
+-  return <div className="card">Hello, {user.name}</div>;
++  // TODO: replace with better layout
++  // NOTE: temporary copy
++  const title = "Hello, " + (user.name || "Guest"); // hard-coded string (no i18n)
++  return (
++    <div className="card">
++      <h3>{title}</h3>
++    </div>
++  );
+ }

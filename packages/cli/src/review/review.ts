@@ -1,21 +1,24 @@
-import * as path from 'node:path'
-import * as crypto from 'node:crypto'
+import path from 'node:path'
+import crypto from 'node:crypto'
+import fs from 'node:fs'
 
-import type { ReviewJson, Severity } from '@sentinel/core'
-import { maxSeverity, sevRank, findRepoRoot, printReviewSummary, printAnalyticsSummary } from '../cli-utils'
-
+import type { ReviewJson, Severity, RulesJson } from '@sentinel/core'
+import {
+  findRepoRoot,
+  maxSeverity,
+  sevRank,
+  printAnalyticsSummary,
+  printReviewSummary,
+  fail,
+} from '../cli-utils'
 import { pickProvider } from './providers'
 import { loadRules, loadBoundaries } from './profiles'
-import { readDiff, prepareOutputs, writeArtifacts } from './io'
+import { writeArtifacts, makeLatestPaths, makeHistoryPaths } from './io'
+import { resolveAnalyticsConfig, createAnalyticsClient } from '@sentinel/analytics'
+import { buildContextCLI } from '../context'
+import { loadConfig, type ProviderName } from '../config'
 
-import { resolveAnalyticsConfig, createAnalyticsClient } from "@sentinel/analytics"
-
-// ────────────────────────────────────────────────────────────────────────────────
 const REPO_ROOT = findRepoRoot()
-
-function capFindings<T extends { severity: Severity }>(list: T[], cap?: number): T[] {
-  return cap && cap > 0 && list.length > cap ? list.slice(0, cap) : list
-}
 
 type Exit =
   | { mode: 'legacy'; exitCode: number; top?: Severity | null }
@@ -33,158 +36,168 @@ function computeExit(top: Severity | null | undefined, failOn?: 'none' | 'major'
   return { mode: 'legacy', exitCode: code, top }
 }
 
-// helpers
-const sha1 = (s: string) => crypto.createHash('sha1').update(s).digest('hex')
-const salted = (s: string, salt: string) => sha1(`${salt}:${s}`)
-function resolveAbs(repoRoot: string, maybePath?: string): string | undefined {
-  if (!maybePath) return undefined
-  return path.isAbsolute(maybePath) ? maybePath : path.join(repoRoot, maybePath)
+async function ensureContext(profile: string, rc: ReturnType<typeof loadConfig>) {
+  const outFile = path.join(rc.out.contextDirAbs, `${profile}.md`)
+  if (!fs.existsSync(outFile)) {
+    await buildContextCLI({
+      profile,
+      profilesDir: rc.profilesDir,
+      out: outFile,
+      includeADR: rc.context.includeADR,
+      includeBoundaries: rc.context.includeBoundaries,
+      maxBytes: rc.context.maxBytes,
+      maxApproxTokens: rc.context.maxApproxTokens,
+    } as any)
+  }
+  let md = fs.readFileSync(outFile, 'utf8')
+  const limit = rc.context.maxBytes || 1_500_000
+  if (Buffer.byteLength(md, 'utf8') > limit) {
+    md = Buffer.from(md, 'utf8').subarray(0, limit).toString('utf8')
+  }
+  return md
 }
 
-// ────────────────────────────────────────────────────────────────────────────────
 export async function runReviewCLI(opts: {
   diff: string
   profile: string
   outMd: string
   outJson?: string
   profilesDir?: string
-  provider?: string
+  provider?: ProviderName
   failOn?: 'none' | 'major' | 'critical'
   maxComments?: number
   analytics?: boolean
   analyticsOut?: string
   debug?: boolean
-  rc?: any               // пробрасываем целиком rc из команды
+  rc?: any
 }) {
-  const provider = pickProvider(opts.provider)
-  const providerLabel = provider.name || 'local'
+  // ── resolve rc (CLI config)
+  const rc = opts.rc ?? loadConfig({
+    profile: opts.profile,
+    provider: opts.provider,
+    profilesDir: opts.profilesDir,
+    failOn: opts.failOn as any,
+    maxComments: opts.maxComments,
+  })
 
-  const { outMdPath, outJsonPath } = prepareOutputs(REPO_ROOT, opts.outMd, opts.outJson)
-  const { diffPath, diffText } = readDiff(REPO_ROOT, opts.diff)
+  // ── provider
+  const provider = await pickProvider(rc.provider)
+  const providerLabel = provider.name || rc.provider || 'local'
 
-  const rulesRaw = loadRules(REPO_ROOT, opts.profile, opts.profilesDir)
-  const boundaries = loadBoundaries(REPO_ROOT, opts.profile, opts.profilesDir)
-
-  if (opts.debug) {
-    console.log('[review:debug]', {
-      REPO_ROOT,
-      provider: providerLabel,
-      diffPath,
-      outMdPath,
-      outJsonPath,
-      profilesDir: opts.profilesDir,
-      profile: opts.profile,
-      hasRules: !!rulesRaw,
-      hasBoundaries: !!boundaries,
-    })
+  // ── diff
+  const diffPath = path.isAbsolute(opts.diff) ? opts.diff : path.join(REPO_ROOT, opts.diff)
+  if (!fs.existsSync(diffPath)) {
+    fail(`[review] diff file not found at ${diffPath}`)
+    process.exit(2)
   }
+  const diffText = fs.readFileSync(diffPath, 'utf8')
 
-  // ── Analytics: resolver + client
+  // ── rules/boundaries/context
+  const rulesRaw: RulesJson | null = loadRules(REPO_ROOT, rc.profile, rc.profilesDir)
+  const boundaries = loadBoundaries(REPO_ROOT, rc.profile, rc.profilesDir)
+  const contextMd = await ensureContext(rc.profile, rc)
+
   const runId = crypto.randomUUID?.() ?? `run_${Date.now()}`
+  const startedAt = Date.now()
+
+  // ── analytics
   const cfgResolved = resolveAnalyticsConfig({
-    rc: opts.rc,                       // .sentinelrc.json уже разобран в командe
+    rc,
     repoRoot: REPO_ROOT,
     overrides: {
       enabled: typeof opts.analytics === 'boolean' ? opts.analytics : undefined,
       outDir: opts.analyticsOut,
     },
   })
-
   const analytics = createAnalyticsClient(
     {
       projectRemoteUrl: process.env.GIT_REMOTE_URL || process.env.CI_REPOSITORY_URL,
       commitSha: process.env.GIT_COMMIT_SHA || process.env.CI_COMMIT_SHA,
       branch: process.env.GIT_BRANCH || process.env.CI_COMMIT_BRANCH,
       provider: providerLabel,
-      profile: opts.profile,
+      profile: rc.profile,
       env: (process.env.SENTINEL_ENV as any) || 'dev',
     },
     cfgResolved
   )
 
-  await analytics.init()
-  analytics.start(runId, { model: process.env.SENTINEL_MODEL })
+  // ── outputs (latest & history)
+  const latest = makeLatestPaths(rc.out.reviewsDirAbs, rc.profile, rc.out.mdName, rc.out.jsonName)
+  const history = makeHistoryPaths(rc.out.reviewsDirAbs, rc.profile, runId, rc.out.mdName, rc.out.jsonName)
 
-  printAnalyticsSummary({ repoRoot: REPO_ROOT, runId, diag: analytics.diagnostics() })
+  // ── provider debug dir
+  const debugDir = path.join(rc.out.reviewsDirAbs, rc.profile, 'debug')
+  if (opts.debug) fs.mkdirSync(debugDir, { recursive: true })
 
-  const startedAt = Date.now()
+  try {
+    await analytics.init()
+    analytics.start(runId, { model: rc.providerOptions?.model })
+    printAnalyticsSummary({ repoRoot: REPO_ROOT, runId, diag: analytics.diagnostics() })
 
-  // ── Основной review через провайдера
-  const review: ReviewJson = await provider.review({
-    diffText,
-    profile: opts.profile,
-    rules: rulesRaw,
-    boundaries,
-  })
-
-  // Канонизируем run_id
-  review.ai_review.run_id = runId
-
-  // cap findings: cli flag > ENV
-  const envCap = process.env.SENTINEL_MAX_COMMENTS ? Number(process.env.SENTINEL_MAX_COMMENTS) : undefined
-  const cap = Number.isFinite(opts.maxComments as number)
-    ? (opts.maxComments as number)
-    : Number.isFinite(envCap as number)
-    ? (envCap as number)
-    : undefined
-
-  review.ai_review.findings = capFindings(
-    review.ai_review.findings as unknown as { severity: Severity }[],
-    cap
-  ) as any
-
-  // артефакты JSON + Markdown транспорт
-  writeArtifacts(outJsonPath, outMdPath, review)
-
-  // summary + exit
-  const findings = review.ai_review.findings as unknown as {
-    severity: Severity
-    rule: string
-    file?: string
-    locator?: string
-  }[]
-
-  const top = maxSeverity(findings)
-  const exit = computeExit(top, opts.failOn)
-
-  printReviewSummary({
-    repoRoot: REPO_ROOT,
-    providerLabel,
-    profile: opts.profile,
-    outJsonPath,
-    outMdPath,
-    findings,
-    exit,
-  })
-
-  // ── Analytics: finding.reported + run.finished
-  const counts: Record<Severity, number> = { critical: 0, major: 0, minor: 0, info: 0 }
-  const salt = cfgResolved.salt // используем ровно тот же salt, что и рантайм
-
-  for (const f of findings) {
-    counts[f.severity] = (counts[f.severity] ?? 0) + 1
-
-    // privacy-first: хеш абсолютного пути
-    const fileAbs = resolveAbs(REPO_ROOT, f.file)
-    const fileHash = fileAbs ? salted(fileAbs, salt) : 'unknown'
-
-    analytics.finding({
-      rule_id: f.rule,
-      severity: f.severity,
-      file_hash: fileHash,
-      locator: f.locator || 'L0',
-      signals: {
-        provider_conf: (f as any).providerConfidence,
-        rule_conf: (f as any).ruleConfidence,
-      },
+    // ── main provider call (no env leakage)
+    const review: ReviewJson = await provider.review({
+      repoRoot: REPO_ROOT,
+      profile: rc.profile,
+      diffText,
+      rules: rulesRaw,
+      boundaries,
+      context: { markdown: contextMd, maxBytes: rc.context.maxBytes },
+      providerOptions: rc.providerOptions,
+      debug: { enabled: !!opts.debug, debug: !!opts.debug, dir: debugDir },
     })
+
+    // normalize run id
+    review.ai_review.run_id = runId
+
+    // ── cap findings (CLI flag > ENV)
+    const cap =
+      Number.isFinite(opts.maxComments as number)
+        ? (opts.maxComments as number)
+        : (process.env.SENTINEL_MAX_COMMENTS ? Number(process.env.SENTINEL_MAX_COMMENTS) : undefined)
+
+    if (cap && cap > 0 && review.ai_review.findings.length > cap) {
+      review.ai_review.findings = review.ai_review.findings.slice(0, cap)
+    }
+
+    // ── write artifacts (latest + history)
+    writeArtifacts(latest.json, latest.md, review)
+    writeArtifacts(history.json, history.md, review)
+
+    // ── summary + exit
+    const findings = review.ai_review.findings as { severity: Severity; rule: string; file?: string; locator?: string }[]
+    const top = maxSeverity(findings)
+    const exit = computeExit(top, opts.failOn)
+
+    printReviewSummary({
+      repoRoot: REPO_ROOT,
+      providerLabel,
+      profile: rc.profile,
+      outJsonPath: latest.json,
+      outMdPath: latest.md,
+      findings,
+      exit,
+    })
+
+    // ── analytics brief
+    const counts = { critical: 0, major: 0, minor: 0, info: 0 as number }
+    for (const f of findings) (counts as any)[f.severity]++
+
+    await analytics.finish({
+      duration_ms: Date.now() - startedAt,
+      findings_total: findings.length,
+      findings_by_severity: counts as any,
+    })
+
+    process.exit(exit.exitCode)
+  } catch (e: any) {
+    try {
+      await analytics.finish({
+        duration_ms: Date.now() - startedAt,
+        findings_total: 0,
+        findings_by_severity: { critical: 0, major: 0, minor: 0, info: 0 },
+      })
+    } catch {}
+    fail(String(e?.stack || e))
+    process.exit(2)
   }
-
-  await analytics.finish({
-    duration_ms: Date.now() - startedAt,
-    findings_total: findings.length,
-    findings_by_severity: counts,
-  })
-
-  process.exit(exit.exitCode)
 }

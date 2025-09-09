@@ -1,0 +1,23 @@
+diff --git a/packages/app/src/pages/Dashboard.tsx b/packages/app/src/pages/Dashboard.tsx
+index 5555555..6666666 100644
+--- a/packages/app/src/pages/Dashboard.tsx
++++ b/packages/app/src/pages/Dashboard.tsx
+@@ -1,6 +1,22 @@
+ import React from 'react';
++// Heavy runtime dependency just for formatting dates
++import moment from 'moment'; // consider date-fns or Intl.DateTimeFormat
+
+ export default function Dashboard() {
+-  return <div>Dashboard</div>;
++  const now = moment().format('YYYY-MM-DD HH:mm');
++  const handle = () => alert('clicked');
++  return (
++    <div>
++      <p>Now: {now}</p>
++      {/* ❌ a11y: clickable div without keyboard handlers */}
++      <div role="button" onClick={handle}>
++        Click me
++      </div>
++    </div>
++  );
+ }

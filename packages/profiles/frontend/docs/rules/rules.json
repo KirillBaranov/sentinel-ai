@@ -39,12 +39,273 @@
       "scope": ["changed"],
       "trigger": {
         "type": "pattern",
-        "signals": ["added-line:TODO"]
+        "signals": ["added-line:TODO", "added-line:FIXME"]
       },
       "status": "active",
       "version": 1,
       "experiments": { "rollout": 1.0 },
       "ask_feedback": false
+    },
+    {
+      "id": "sec.no-secrets",
+      "area": "Security",
+      "severity": "critical",
+      "description": "Do not commit secrets (API keys, tokens, private keys).",
+      "trigger": {
+        "type": "hybrid",
+        "evidence": "added-only",
+        "requireSignalMatch": true,
+        "signals": [
+          "regex:AKIA[0-9A-Z]{16}",
+          "regex:sk-[A-Za-z0-9]{20,}",
+          "regex:BEGIN PRIVATE KEY"
+        ],
+        "exempt": [
+          "regex:\\bprocess\\.env\\.[A-Z0-9_]+\\b",
+          "regex:(?:import\\s+['\\\"]dotenv\\/config['\\\"])",
+          "regex:\\bdotenv\\.(?:config|load)\\b",
+          "regex:\\bloadEnv\\("
+        ]
+      },
+      "status": "active",
+      "version": 1
+    },
+    {
+      "id": "sec.unsafe-innerhtml",
+      "area": "Security",
+      "severity": "major",
+      "description": "Avoid dangerouslySetInnerHTML and raw HTML injection unless sanitized.",
+      "link": "docs/handbook/security.md#xss",
+      "examples": {
+        "bad": ["<div dangerouslySetInnerHTML={{ __html: userHtml }} />"],
+        "good": ["<SanitizedHtml html={trusted} />"]
+      },
+      "scope": ["changed", "file"],
+      "trigger": {
+        "type": "pattern",
+        "signals": ["dangerouslySetInnerHTML", "innerHTML", "createObjectURL-html"]
+      },
+      "status": "active",
+      "version": 1
+    },
+    {
+      "id": "lint.no-eslint-disable-blind",
+      "area": "Quality",
+      "severity": "major",
+      "description": "Do not use `eslint-disable` without a reason and minimal scope.",
+      "link": "docs/handbook/style.md#eslint-disable",
+      "examples": {
+        "bad": ["// eslint-disable-next-line"],
+        "good": ["// eslint-disable-next-line no-explicit-any — legacy adapter, remove after ISSUE-42"]
+      },
+      "scope": ["changed"],
+      "trigger": {
+        "type": "pattern",
+        "signals": ["eslint-disable", "eslint-disable-next-line"]
+      },
+      "status": "active",
+      "version": 1,
+      "ask_feedback": false
+    },
+    {
+      "id": "types.public-apis-typed",
+      "area": "Types",
+      "severity": "major",
+      "description": "Exported functions/components must have explicit types for params and return.",
+      "link": "docs/handbook/types.md#public-apis",
+      "examples": {
+        "bad": ["export function fetchData(a, b) { ... }"],
+        "good": ["export function fetchData(a: Id, b: Options): Promise<Result> { ... }"]
+      },
+      "scope": ["changed", "file"],
+      "trigger": {
+        "type": "llm",
+        "signals": ["export function", "export const", "React.FC implicit"]
+      },
+      "status": "active",
+      "version": 1
+    },
+    {
+      "id": "react.hooks-deps",
+      "area": "Quality",
+      "severity": "major",
+      "description": "React hooks must have correct dependency arrays; no missing or unstable deps.",
+      "link": "docs/handbook/react.md#hooks-deps",
+      "examples": {
+        "bad": ["useEffect(() => doThing(), []) // but reads props/state"],
+        "good": ["useEffect(() => doThing(count), [count])"]
+      },
+      "scope": ["changed", "file"],
+      "trigger": {
+        "type": "heuristic",
+        "signals": ["useEffect(", "useMemo(", "useCallback(", "deps-mismatch"]
+      },
+      "status": "active",
+      "version": 1
+    },
+    {
+      "id": "react.list-keys",
+      "area": "Quality",
+      "severity": "minor",
+      "description": "List rendering must include stable, unique `key` props.",
+      "link": "docs/handbook/react.md#keys",
+      "examples": {
+        "bad": ["items.map(i => <Row />)"],
+        "good": ["items.map(i => <Row key={i.id} />)"]
+      },
+      "scope": ["changed"],
+      "trigger": {
+        "type": "llm",
+        "signals": [".map(", "key=", "Array.from("]
+      },
+      "status": "active",
+      "version": 1
+    },
+    {
+      "id": "perf.no-huge-bundles",
+      "area": "Performance",
+      "severity": "major",
+      "description": "Discourage large vendor bundles; prefer code splitting and lazy loading.",
+      "link": "docs/handbook/performance.md#bundles",
+      "examples": {
+        "bad": ["import * as moment from 'moment'"],
+        "good": ["import('date-fns/format')", "dynamic(() => import('./Heavy'))"]
+      },
+      "scope": ["module", "project"],
+      "trigger": {
+        "type": "heuristic",
+        "signals": ["large-imports", "dynamic-import-needed", "bundle-hint"]
+      },
+      "status": "active",
+      "version": 1,
+      "ask_feedback": false
+    },
+    {
+      "id": "i18n.no-hardcoded-strings",
+      "area": "Quality",
+      "severity": "minor",
+      "description": "Avoid hardcoded user-facing strings; use i18n utilities.",
+      "link": "docs/handbook/i18n.md#strings",
+      "examples": {
+        "bad": ["<h1>Welcome back!</h1>"],
+        "good": ["<h1>{t('auth.welcome')}</h1>"]
+      },
+      "scope": ["changed"],
+      "trigger": {
+        "type": "llm",
+        "signals": ["user-facing-text", "string-literal-in-jsx"]
+      },
+      "status": "active",
+      "version": 1
+    },
+    {
+      "id": "accessibility.alt-aria",
+      "area": "Accessibility",
+      "severity": "major",
+      "description": "Images and interactive elements must have proper alt/aria attributes.",
+      "link": "docs/handbook/a11y.md#alt-aria",
+      "examples": {
+        "bad": ["<img src=\"...\" />", "<button onClick={...}></button>"],
+        "good": ["<img src=\"...\" alt=\"Product photo\" />", "<button aria-label=\"Open menu\" ... />"]
+      },
+      "scope": ["changed", "file"],
+      "trigger": {
+        "type": "heuristic",
+        "signals": ["img-no-alt", "button-no-name", "aria-missing"]
+      },
+      "status": "active",
+      "version": 1
+    },
+    {
+      "id": "logging.no-debug-in-prod",
+      "trigger": {
+        "type": "pattern",
+        "evidence": "added-only",
+        "requireSignalMatch": true,
+        "signals": [
+          "added-line:console.log",
+          "added-line:console.debug",
+          "added-line:console.trace"
+        ],
+        "exempt": [
+          "regex:process\\.env\\.NODE_ENV\\s*!==?\\s*['\\\"]production['\\\"]",
+          "regex:process\\.env\\.NODE_ENV\\s*===\\s*['\\\"]development['\\\"]",
+          "regex:process\\.env\\.NODE_ENV\\s*===\\s*['\\\"]production['\\\"]\\s*\\)\\s*return"
+        ]
+      }
+    },
+    {
+      "id": "build.package-scripts-safety",
+      "area": "Build",
+      "severity": "major",
+      "description": "Package scripts must avoid unsafe commands without justification.",
+      "link": "docs/handbook/build.md#scripts",
+      "examples": {
+        "bad": ["\"clean\": \"rm -rf /\""],
+        "good": ["\"clean\": \"rimraf dist\""]
+      },
+      "scope": ["file", "project"],
+      "trigger": {
+        "type": "hybrid",
+        "signals": ["package.json", "scripts", "regex:(rm -rf\\s+/)"]
+      },
+      "status": "active",
+      "version": 1
+    },
+    {
+      "id": "deps.no-dev-in-prod",
+      "area": "Quality",
+      "severity": "major",
+      "description": "Avoid importing dev-only packages in production code.",
+      "link": "docs/handbook/dependencies.md#dev-prod",
+      "examples": {
+        "bad": ["import 'vitest' in src/"],
+        "good": ["dev imports only in test files"]
+      },
+      "scope": ["changed", "project"],
+      "trigger": {
+        "type": "heuristic",
+        "signals": ["import-vitest-in-src", "import-msw-in-src"]
+      },
+      "status": "active",
+      "version": 1
+    },
+    {
+      "id": "testing.cover-critical-paths",
+      "area": "Testing",
+      "severity": "minor",
+      "description": "Critical modules changed should have at least a basic test updated or added.",
+      "link": "docs/handbook/testing.md#critical-paths",
+      "examples": {
+        "bad": ["Major refactor in auth slice without tests"],
+        "good": ["Add/adjust test for changed reducer/effect"]
+      },
+      "scope": ["module", "project"],
+      "trigger": {
+        "type": "llm",
+        "signals": ["critical-area-change", "no-test-diff"]
+      },
+      "status": "active",
+      "version": 1,
+      "ask_feedback": true
+    },
+    {
+      "id": "perf.images-optimized",
+      "area": "Performance",
+      "severity": "minor",
+      "description": "Prefer optimized images (modern formats, width/height, lazy loading).",
+      "link": "docs/handbook/performance.md#images",
+      "examples": {
+        "bad": ["<img src=\"hero.png\" />"],
+        "good": ["<img src=\"hero.avif\" loading=\"lazy\" width=\"...\" height=\"...\" />"]
+      },
+      "scope": ["changed", "file"],
+      "trigger": {
+        "type": "heuristic",
+        "signals": ["img-no-dimensions", "png-large", "missing-lazy"]
+      },
+      "status": "active",
+      "version": 1
     }
   ]
 }

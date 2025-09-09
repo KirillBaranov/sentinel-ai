@@ -1,4 +1,3 @@
-// packages/cli/src/config.ts
 import fs from 'node:fs'
 import path from 'node:path'
 import { findRepoRoot } from '../cli-utils'
@@ -6,35 +5,36 @@ import { findRepoRoot } from '../cli-utils'
 export type FailOn = 'major' | 'critical'
 export type ProviderName = 'local' | 'mock' | 'openai' | 'claude'
 
+/** Универсальные опции провайдера (оба LLM-провайдера их поддерживают) */
+export interface CommonProviderOptions {
+  model?: string
+  temperature?: number
+  maxTokens?: number
+}
+
 export interface SentinelRc {
   profile?: string
-  provider?: ProviderName
-  /** profiles root, e.g. "packages/profiles" */
+  provider?: string            // допускаем произвольный кейс, нормализуем ниже
   profilesDir?: string
 
-  /** CI exit policy and limits */
   failOn?: FailOn
   maxComments?: number
 
-  /** Единый стандарт путей */
   out?: {
-    root?: string          // корень артефактов, по умолчанию ".sentinel"
-    contextDir?: string    // "context"
-    reviewsDir?: string    // "reviews"
-    analyticsDir?: string  // "analytics"
-    exportsDir?: string    // "exports"
-    // для review-файлов храним только имена (куда класть — решает reviewsDir)
-    mdName?: string        // "review.md"
-    jsonName?: string      // "review.json"
+    root?: string
+    contextDir?: string
+    reviewsDir?: string
+    analyticsDir?: string
+    exportsDir?: string
+    mdName?: string
+    jsonName?: string
   }
 
-  /** Параметры рендера */
   render?: {
-    template?: string          // abs/rel к repoRoot
+    template?: string
     severityMap?: Record<string, string>
   }
 
-  /** build-context options */
   context?: {
     includeADR?: boolean
     includeBoundaries?: boolean
@@ -42,21 +42,20 @@ export interface SentinelRc {
     maxApproxTokens?: number
   }
 
-  /** Аналитика (file JSONL sink + плагины) */
   analytics?: {
     enabled?: boolean
-    /** byRun | byDay */
     mode?: 'byRun' | 'byDay'
-    /** если не задано — берём <out.root>/<out.analyticsDir> */
     outDir?: string
     salt?: string
     privacy?: 'team' | 'detailed'
     plugins?: string[]
     pluginConfig?: Record<string, any>
   }
+
+  providerOptions?: CommonProviderOptions
 }
 
-/** Разрешённая конфигурация с абсолютными путями */
+/** Разрешённая конфигурация (абсолютные пути и дефолты) */
 export interface ResolvedConfig {
   repoRoot: string
 
@@ -93,11 +92,14 @@ export interface ResolvedConfig {
     plugins?: string[]
     pluginConfig?: Record<string, any>
   }
+
+  providerOptions: Required<CommonProviderOptions>
 }
 
 /* ──────────────────────────────────────────────────────────────────────────── */
 
 const REPO_ROOT = findRepoRoot()
+const VALID_PROVIDERS = new Set<ProviderName>(['local', 'mock', 'openai', 'claude'])
 
 function readJsonSafe(p: string): any | null {
   try { return JSON.parse(fs.readFileSync(p, 'utf8')) } catch { return null }
@@ -118,26 +120,45 @@ function findRc(startDir = process.cwd(), repoRoot = REPO_ROOT): string | null {
   return fs.existsSync(fallback) ? fallback : null
 }
 
-/** Глубокий merge только для 1 уровня вложенности (out/render/context/analytics) */
+/** tiny helper: копируем только определённые (не undefined) поля */
+function pickDefined<T extends Record<string, any>>(obj: T | undefined): Partial<T> {
+  if (!obj) return {}
+  const out: Partial<T> = {}
+  for (const [k, v] of Object.entries(obj)) {
+    if (v !== undefined) (out as any)[k] = v
+  }
+  return out
+}
+
+/** Глубокий merge, игнорирующий undefined (ключ к багу) */
 function mergeRc(base: SentinelRc, over?: SentinelRc): SentinelRc {
   if (!over) return base
   return {
     ...base,
-    ...over,
-    out: { ...(base.out || {}), ...(over.out || {}) },
-    render: { ...(base.render || {}), ...(over.render || {}) },
-    context: { ...(base.context || {}), ...(over.context || {}) },
-    analytics: { ...(base.analytics || {}), ...(over.analytics || {}) },
+    // верхний уровень — только определённые ключи
+    ...pickDefined({
+      profile: over.profile,
+      provider: over.provider,
+      profilesDir: over.profilesDir,
+      failOn: over.failOn,
+      maxComments: over.maxComments,
+    }),
+    // вложенные блоки — тоже через pickDefined
+    out: { ...(base.out || {}), ...pickDefined(over.out) },
+    render: { ...(base.render || {}), ...pickDefined(over.render) },
+    context: { ...(base.context || {}), ...pickDefined(over.context) },
+    analytics: { ...(base.analytics || {}), ...pickDefined(over.analytics) },
+    providerOptions: { ...(base.providerOptions || {}), ...pickDefined(over.providerOptions) },
   }
 }
 
-/** ENV → RC (только новый стандарт ключей) */
+/** ENV → RC (новые ключи + алиасы для LLM) */
 function envAsRc(): SentinelRc {
   const out: SentinelRc = {}
 
   if (process.env.SENTINEL_PROFILE) out.profile = process.env.SENTINEL_PROFILE
-  if (process.env.SENTINEL_PROFILES_DIR) out.profilesDir = process.env.SENTINEL_PROFILES_DIR as string
-  if (process.env.SENTINEL_PROVIDER) out.provider = process.env.SENTINEL_PROVIDER as ProviderName
+  if (process.env.SENTINEL_PROFILES_DIR) out.profilesDir = process.env.SENTINEL_PROFILES_DIR
+  if (process.env.SENTINEL_PROVIDER) out.provider = process.env.SENTINEL_PROVIDER
   if (process.env.SENTINEL_FAIL_ON) out.failOn = process.env.SENTINEL_FAIL_ON as FailOn
   if (process.env.SENTINEL_MAX_COMMENTS) out.maxComments = Number(process.env.SENTINEL_MAX_COMMENTS)
 
@@ -150,16 +171,16 @@ function envAsRc(): SentinelRc {
   const outMdName = process.env.SENTINEL_OUT_MD_NAME
   const outJsonNm = process.env.SENTINEL_OUT_JSON_NAME
   if (outRoot || outCtx || outRev || outAn || outExp || outMdName || outJsonNm) {
-    out.out = {
+    out.out = pickDefined({
       ...(out.out || {}),
-      ...(outRoot   ? { root: outRoot } : {}),
-      ...(outCtx    ? { contextDir: outCtx } : {}),
-      ...(outRev    ? { reviewsDir: outRev } : {}),
-      ...(outAn     ? { analyticsDir: outAn } : {}),
-      ...(outExp    ? { exportsDir: outExp } : {}),
-      ...(outMdName ? { mdName: outMdName } : {}),
-      ...(outJsonNm ? { jsonName: outJsonNm } : {}),
-    }
+      root: outRoot,
+      contextDir: outCtx,
+      reviewsDir: outRev,
+      analyticsDir: outAn,
+      exportsDir: outExp,
+      mdName: outMdName,
+      jsonName: outJsonNm,
+    })
   }
 
   // context.*
@@ -168,13 +189,13 @@ function envAsRc(): SentinelRc {
   const maxBytes          = process.env.SENTINEL_CONTEXT_MAX_BYTES
   const maxTokens         = process.env.SENTINEL_CONTEXT_MAX_TOKENS
   if (includeADR || includeBoundaries || maxBytes || maxTokens) {
-    out.context = {
+    out.context = pickDefined({
       ...(out.context || {}),
-      ...(includeADR ? { includeADR: includeADR === '1' || includeADR === 'true' } : {}),
-      ...(includeBoundaries ? { includeBoundaries: includeBoundaries === '1' || includeBoundaries === 'true' } : {}),
-      ...(maxBytes ? { maxBytes: Number(maxBytes) } : {}),
-      ...(maxTokens ? { maxApproxTokens: Number(maxTokens) } : {}),
-    }
+      includeADR: includeADR === undefined ? undefined : (includeADR === '1' || includeADR === 'true'),
+      includeBoundaries: includeBoundaries === undefined ? undefined : (includeBoundaries === '1' || includeBoundaries === 'true'),
+      maxBytes: maxBytes ? Number(maxBytes) : undefined,
+      maxApproxTokens: maxTokens ? Number(maxTokens) : undefined,
+    })
   }
 
   // analytics.*
@@ -184,23 +205,44 @@ function envAsRc(): SentinelRc {
   const anSalt    = process.env.SENTINEL_ANALYTICS_SALT || process.env.SENTINEL_SALT
   const anPriv    = process.env.SENTINEL_ANALYTICS_PRIVACY
   if (anEnabled || anMode || anDir || anSalt || anPriv) {
-    out.analytics = {
+    out.analytics = pickDefined({
       ...(out.analytics || {}),
-      ...(anEnabled ? { enabled: anEnabled === '1' || anEnabled === 'true' } : {}),
-      ...(anMode ? { mode: (anMode as 'byRun' | 'byDay') } : {}),
-      ...(anDir ? { outDir: anDir } : {}),
-      ...(anSalt ? { salt: anSalt } : {}),
-      ...(anPriv ? { privacy: (anPriv as 'team' | 'detailed') } : {}),
-    }
+      enabled: anEnabled === undefined ? undefined : (anEnabled === '1' || anEnabled === 'true'),
+      mode: anMode as any,
+      outDir: anDir,
+      salt: anSalt,
+      privacy: anPriv as any,
+    })
+  }
+
+  // providerOptions (универсальные + алиасы)
+  const pModel = process.env.SENTINEL_PROVIDER_MODEL
+  const pTemp  = process.env.SENTINEL_PROVIDER_TEMPERATURE
+  const pMax   = process.env.SENTINEL_PROVIDER_MAX_TOKENS
+  const oModel = process.env.OPENAI_MODEL
+  const oTemp  = process.env.OPENAI_TEMPERATURE
+  const oMax   = process.env.OPENAI_MAX_TOKENS
+  const cModel = process.env.CLAUDE_MODEL
+  const cTemp  = process.env.CLAUDE_TEMPERATURE
+  const cMax   = process.env.CLAUDE_MAX_TOKENS
+
+  const anyPO = pModel || pTemp || pMax || oModel || oTemp || oMax || cModel || cTemp || cMax
+  if (anyPO) {
+    out.providerOptions = pickDefined({
+      ...(out.providerOptions || {}),
+      model: pModel || oModel || cModel,
+      temperature: pTemp ? Number(pTemp) : (oTemp ? Number(oTemp) : (cTemp ? Number(cTemp) : undefined)),
+      maxTokens: pMax ? Number(pMax) : (oMax ? Number(oMax) : (cMax ? Number(cMax) : undefined)),
+    })
   }
 
   return out
 }
 
-/** Значения по умолчанию — “хорошо и удобно” */
+/** Значения по умолчанию */
 const defaults: Required<Pick<SentinelRc,
-  'profile' | 'provider' | 'out' | 'context' | 'analytics'
->> = {
+  'profile' | 'out' | 'context' | 'analytics'
+>> & Pick<SentinelRc, 'provider' | 'providerOptions'> = {
   profile: 'frontend',
   provider: 'local',
   out: {
@@ -221,12 +263,19 @@ const defaults: Required<Pick<SentinelRc,
   analytics: {
     enabled: false,
     mode: 'byDay',
-    outDir: '',      // будет вычислено из out.root/analyticsDir
+    outDir: '',
     salt: 'sentinel',
     privacy: 'team',
     plugins: [],
     pluginConfig: {},
   },
+  providerOptions: {},
+}
+
+/** Нормализация ID провайдера */
+function sanitizeProvider(v?: string): ProviderName {
+  const key = (v || '').toLowerCase() as ProviderName
+  return VALID_PROVIDERS.has(key) ? key : 'local'
 }
 
 /** Публичный загрузчик: defaults <- rc(file) <- env <- cli */
@@ -234,7 +283,8 @@ export function loadConfig(cliOverrides?: SentinelRc): ResolvedConfig {
   const rcPath = findRc()
   const fileRc = rcPath ? (readJsonSafe(rcPath) as SentinelRc || {}) : {}
 
-  const merged = mergeRc(
+  // ВАЖНО: mergeRc теперь игнорирует undefined → CLI не сможет случайно затереть provider
+  const mergedRaw = mergeRc(
     mergeRc(
       mergeRc(defaults, fileRc),
       envAsRc(),
@@ -244,8 +294,11 @@ export function loadConfig(cliOverrides?: SentinelRc): ResolvedConfig {
 
   const repoRoot = REPO_ROOT
 
+  // provider — строго нормализуем
+  const provider = sanitizeProvider(mergedRaw.provider)
+
   // normalize & absolutize
-  const out = merged.out || {}
+  const out = mergedRaw.out || {}
   const outRootAbs = path.isAbsolute(out.root || '')
     ? (out.root as string)
     : path.join(repoRoot, out.root || '.sentinel')
@@ -258,32 +311,63 @@ export function loadConfig(cliOverrides?: SentinelRc): ResolvedConfig {
   const mdName   = out.mdName   ?? 'review.md'
   const jsonName = out.jsonName ?? 'review.json'
 
-  const analytics = merged.analytics || {}
+  const analytics = mergedRaw.analytics || {}
   const analyticsOutDirAbs = (() => {
     if (analytics.outDir && path.isAbsolute(analytics.outDir)) return analytics.outDir
     if (analytics.outDir) return path.join(repoRoot, analytics.outDir)
-    // если не задано — берём стандарт из out.*
     return analyticsDirAbs
   })()
 
   const profilesDirAbs = (() => {
-    const p = merged.profilesDir || 'packages/profiles'
+    const p = mergedRaw.profilesDir || 'packages/profiles'
     return path.isAbsolute(p) ? p : path.join(repoRoot, p)
   })()
 
-  const render = merged.render || {}
+  const render = mergedRaw.render || {}
   const renderTemplateAbs =
     render.template
       ? (path.isAbsolute(render.template) ? render.template : path.join(repoRoot, render.template))
       : undefined
 
+  // Дефолты по провайдерам
+  const defaultsByProvider = (prov: ProviderName): Required<CommonProviderOptions> => {
+    switch (prov) {
+      case 'openai': return { model: 'gpt-4o-mini', temperature: 0.1, maxTokens: 1500 }
+      case 'claude': return { model: 'claude-3-haiku-20240307', temperature: 0.1, maxTokens: 1500 }
+      default:       return { model: '', temperature: 0.0, maxTokens: 0 }
+    }
+  }
+
+  // Итоговые providerOptions:
+  let providerOptions: Required<CommonProviderOptions> = {
+    ...defaultsByProvider(provider),
+    ...(mergedRaw.providerOptions || {}),
+  }
+
+  // Для local/mock — опции модели неактуальны (обнуляем, чтобы не путать)
+  if (provider === 'local' || provider === 'mock') {
+    providerOptions = defaultsByProvider(provider)
+  }
+
+  // warnings, если OPENAI_*/CLAUDE_* есть, а провайдер другой
+  const envHasOpenAI =
+    !!process.env.OPENAI_MODEL || !!process.env.OPENAI_TEMPERATURE || !!process.env.OPENAI_MAX_TOKENS
+  const envHasClaude =
+    !!process.env.CLAUDE_MODEL || !!process.env.CLAUDE_TEMPERATURE || !!process.env.CLAUDE_MAX_TOKENS
+  if (envHasOpenAI && provider !== 'openai') {
+    console.warn('[sentinel:config] OPENAI_* заданы, но provider != "openai" → опции OpenAI игнорируются.')
+  }
+  if (envHasClaude && provider !== 'claude') {
+    console.warn('[sentinel:config] CLAUDE_* заданы, но provider != "claude" → опции Claude игнорируются.')
+  }
+
   return {
     repoRoot,
-    profile: merged.profile || 'frontend',
-    provider: merged.provider || 'local',
+    profile: mergedRaw.profile || 'frontend',
+    provider,
     profilesDir: profilesDirAbs,
-    failOn: merged.failOn || 'major',
-    maxComments: merged.maxComments,
+    failOn: mergedRaw.failOn || 'major',
+    maxComments: mergedRaw.maxComments,
 
     out: {
       rootAbs: outRootAbs,
@@ -301,10 +385,10 @@ export function loadConfig(cliOverrides?: SentinelRc): ResolvedConfig {
     },
 
     context: {
-      includeADR: merged.context?.includeADR ?? true,
-      includeBoundaries: merged.context?.includeBoundaries ?? true,
-      maxBytes: merged.context?.maxBytes ?? 1_500_000,
-      maxApproxTokens: merged.context?.maxApproxTokens ?? 0,
+      includeADR: mergedRaw.context?.includeADR ?? true,
+      includeBoundaries: mergedRaw.context?.includeBoundaries ?? true,
+      maxBytes: mergedRaw.context?.maxBytes ?? 1_500_000,
+      maxApproxTokens: mergedRaw.context?.maxApproxTokens ?? 0,
     },
 
     analytics: {
@@ -316,6 +400,8 @@ export function loadConfig(cliOverrides?: SentinelRc): ResolvedConfig {
       plugins: analytics.plugins,
       pluginConfig: analytics.pluginConfig,
     },
+
+    providerOptions,
   }
 }
 

@@ -1,4 +1,3 @@
-// packages/core/tsconfig.types.json
 {
   "compilerOptions": {
     "target": "ES2022",

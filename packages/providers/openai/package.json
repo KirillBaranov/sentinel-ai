@@ -1,10 +1,7 @@
 {
-  "name": "@sentinel/cli",
+  "name": "@sentinel/provider-openai",
   "version": "0.1.0",
   "type": "module",
-  "bin": {
-    "sentinel": "./dist/index.js"
-  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -14,11 +11,8 @@
     }
   },
   "files": [
-    "dist",
-    "README.md",
-    "LICENSE"
+    "dist"
   ],
-  "sideEffects": false,
   "scripts": {
     "clean": "rimraf dist",
     "build:js": "tsup --config tsup.config.ts",
@@ -28,15 +22,9 @@
     "test": "vitest"
   },
   "dependencies": {
-    "@sentinel/analytics": "workspace:*",
     "@sentinel/core": "workspace:*",
-    "@sentinel/provider-local": "workspace:*",
-    "@sentinel/provider-mock": "workspace:*",
-    "@sentinel/provider-openai": "workspace:*",
     "@sentinel/provider-types": "workspace:*",
-    "colorette": "^2.0.20",
-    "commander": "^12.1.0",
-    "dotenv": "^17.2.2"
+    "openai": "^5.19.1"
   },
   "devDependencies": {
     "rimraf": "^6.0.1",
