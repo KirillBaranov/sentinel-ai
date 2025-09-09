@@ -28,6 +28,14 @@ export interface ProviderOptions {
   maxTokens?: number
 }
 
+/** Optional: compact hint for LLM from the core static engine */
+export interface CorePlanItem {
+  rule_id: string
+  file: string
+  locator: string
+  snippet: string
+}
+
 /**
  * Canonical input shape every review provider receives from the CLI.
  * Keep this stable; add only backwards-compatible fields.
@@ -49,6 +57,28 @@ export interface ProviderReviewInput {
   providerOptions?: ProviderOptions
   /** Debug configuration (when CLI enables provider debug mode) */
   debug?: ProviderDebug
+
+  /**
+   * Hints from core static analysis to focus LLM attention.
+   * Providers MAY include these in prompts; safe to ignore.
+   */
+  planFromCore?: CorePlanItem[]
+
+  /**
+   * Read-only static findings produced by the core (pre-LLM).
+   * Providers MUST NOT mutate this; can reference in prompts.
+   */
+  staticFindings?: Array<{
+    rule: string
+    area: string
+    severity: Severity
+    file: string
+    locator: string
+    finding: string[]
+    why: string
+    suggestion: string
+    fingerprint: string
+  }>
 }
 
 /**
@@ -64,12 +94,15 @@ export type ProviderReviewOutput = ReviewJson
 /**
  * Small helper to construct a valid provider output envelope.
  */
-export function buildProviderOutput(findings: ReviewFinding[], runId?: string): ProviderReviewOutput {
+export function buildProviderOutput(
+  findings: ReviewFinding[],
+  runId?: string,
+): ProviderReviewOutput {
   return {
     ai_review: {
       version: 1 as const,
       run_id: runId ?? `run_${Date.now()}`,
       findings,
-    }
+    },
   }
 }

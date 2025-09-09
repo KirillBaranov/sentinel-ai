@@ -1,5 +1,20 @@
 import type { Severity, SeverityMap } from '@sentinel/core';
-import { DEFAULT_SEVERITY_MAP } from '@sentinel/core';
+
+const DEFAULT_SEVERITY_MAP: SeverityMap = {
+  title: {
+    critical: 'Critical',
+    major: 'Major',
+    minor: 'Minor',
+    info: 'Info',
+  },
+  icon: {
+    critical: '🛑',
+    major: '⚠️',
+    minor: 'ℹ️',
+    info: '💡',
+  },
+  order: ['critical', 'major', 'minor', 'info'],
+}
 
 const SEVERITIES: Severity[] = ['critical', 'major', 'minor', 'info'];
 

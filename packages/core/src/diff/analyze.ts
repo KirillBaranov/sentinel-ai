@@ -1,18 +1,17 @@
-import type { RulesJson, BoundariesConfig, ReviewFinding } from '../types'
-import { runStaticEngine } from '../engine'
-import { normalizeFindings } from '../postprocess/normalize'
+import { runStaticEngine, type EngineOptions } from '../engine'
+import type { RulesJson, ReviewFinding } from '../types'
 
 export interface AnalyzeDiffInput {
   diffText: string
   rulesJson: RulesJson | null
-  boundaries?: BoundariesConfig | null
+  options?: EngineOptions
 }
 
 export function analyzeDiff(input: AnalyzeDiffInput): ReviewFinding[] {
-  const raw = runStaticEngine({
+  const res = runStaticEngine({
     diffText: input.diffText,
     rules: input.rulesJson ?? null,
+    options: input.options,
   })
-
-  return normalizeFindings(raw)
+  return res.findings
 }

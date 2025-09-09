@@ -1,8 +1,16 @@
 import path from 'node:path'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
+
 import type { ReviewJson, Severity, RulesJson } from '@sentinel/core'
-import { findRepoRoot, maxSeverity, sevRank, printAnalyticsSummary, printReviewSummary, fail } from '../cli-utils'
+import {
+  findRepoRoot,
+  maxSeverity,
+  sevRank,
+  printAnalyticsSummary,
+  printReviewSummary,
+  fail,
+} from '../cli-utils'
 import { pickProvider } from './providers'
 import { loadRules, loadBoundaries } from './profiles'
 import { writeArtifacts, makeLatestPaths, makeHistoryPaths } from './io'
@@ -43,7 +51,9 @@ async function ensureContext(profile: string, rc: ReturnType<typeof loadConfig>)
   }
   let md = fs.readFileSync(outFile, 'utf8')
   const limit = rc.context.maxBytes || 1_500_000
-  if (Buffer.byteLength(md, 'utf8') > limit) md = Buffer.from(md, 'utf8').subarray(0, limit).toString('utf8')
+  if (Buffer.byteLength(md, 'utf8') > limit) {
+    md = Buffer.from(md, 'utf8').subarray(0, limit).toString('utf8')
+  }
   return md
 }
 
@@ -61,6 +71,7 @@ export async function runReviewCLI(opts: {
   debug?: boolean
   rc?: any
 }) {
+  // ── resolve rc (CLI config)
   const rc = opts.rc ?? loadConfig({
     profile: opts.profile,
     provider: opts.provider,
@@ -69,10 +80,11 @@ export async function runReviewCLI(opts: {
     maxComments: opts.maxComments,
   })
 
+  // ── provider
   const provider = await pickProvider(rc.provider)
   const providerLabel = provider.name || rc.provider || 'local'
 
-  // diff получаем как есть — сюда можно подставлять и .sentinel/reviews/changes.diff
+  // ── diff
   const diffPath = path.isAbsolute(opts.diff) ? opts.diff : path.join(REPO_ROOT, opts.diff)
   if (!fs.existsSync(diffPath)) {
     fail(`[review] diff file not found at ${diffPath}`)
@@ -80,6 +92,7 @@ export async function runReviewCLI(opts: {
   }
   const diffText = fs.readFileSync(diffPath, 'utf8')
 
+  // ── rules/boundaries/context
   const rulesRaw: RulesJson | null = loadRules(REPO_ROOT, rc.profile, rc.profilesDir)
   const boundaries = loadBoundaries(REPO_ROOT, rc.profile, rc.profilesDir)
   const contextMd = await ensureContext(rc.profile, rc)
@@ -87,6 +100,7 @@ export async function runReviewCLI(opts: {
   const runId = crypto.randomUUID?.() ?? `run_${Date.now()}`
   const startedAt = Date.now()
 
+  // ── analytics
   const cfgResolved = resolveAnalyticsConfig({
     rc,
     repoRoot: REPO_ROOT,
@@ -107,11 +121,11 @@ export async function runReviewCLI(opts: {
     cfgResolved
   )
 
-  // latest + history
+  // ── outputs (latest & history)
   const latest = makeLatestPaths(rc.out.reviewsDirAbs, rc.profile, rc.out.mdName, rc.out.jsonName)
   const history = makeHistoryPaths(rc.out.reviewsDirAbs, rc.profile, runId, rc.out.mdName, rc.out.jsonName)
 
-  // debug dir для провайдера
+  // ── provider debug dir
   const debugDir = path.join(rc.out.reviewsDirAbs, rc.profile, 'debug')
   if (opts.debug) fs.mkdirSync(debugDir, { recursive: true })
 
@@ -120,7 +134,7 @@ export async function runReviewCLI(opts: {
     analytics.start(runId, { model: rc.providerOptions?.model })
     printAnalyticsSummary({ repoRoot: REPO_ROOT, runId, diag: analytics.diagnostics() })
 
-    // вызов провайдера — НИКАКИХ ENV (кроме ключей внутри самого провайдера)
+    // ── main provider call (no env leakage)
     const review: ReviewJson = await provider.review({
       repoRoot: REPO_ROOT,
       profile: rc.profile,
@@ -132,20 +146,24 @@ export async function runReviewCLI(opts: {
       debug: { enabled: !!opts.debug, debug: !!opts.debug, dir: debugDir },
     })
 
+    // normalize run id
     review.ai_review.run_id = runId
 
-    // cap
-    const cap = Number.isFinite(opts.maxComments as number) ? (opts.maxComments as number)
-              : (process.env.SENTINEL_MAX_COMMENTS ? Number(process.env.SENTINEL_MAX_COMMENTS) : undefined)
+    // ── cap findings (CLI flag > ENV)
+    const cap =
+      Number.isFinite(opts.maxComments as number)
+        ? (opts.maxComments as number)
+        : (process.env.SENTINEL_MAX_COMMENTS ? Number(process.env.SENTINEL_MAX_COMMENTS) : undefined)
+
     if (cap && cap > 0 && review.ai_review.findings.length > cap) {
       review.ai_review.findings = review.ai_review.findings.slice(0, cap)
     }
 
-    // запись latest + history
+    // ── write artifacts (latest + history)
     writeArtifacts(latest.json, latest.md, review)
     writeArtifacts(history.json, history.md, review)
 
-    // summary + exit
+    // ── summary + exit
     const findings = review.ai_review.findings as { severity: Severity; rule: string; file?: string; locator?: string }[]
     const top = maxSeverity(findings)
     const exit = computeExit(top, opts.failOn)
@@ -160,9 +178,10 @@ export async function runReviewCLI(opts: {
       exit,
     })
 
-    // analytics (коротко)
+    // ── analytics brief
     const counts = { critical: 0, major: 0, minor: 0, info: 0 as number }
     for (const f of findings) (counts as any)[f.severity]++
+
     await analytics.finish({
       duration_ms: Date.now() - startedAt,
       findings_total: findings.length,

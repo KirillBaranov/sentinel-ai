@@ -218,9 +218,6 @@
     },
     {
       "id": "logging.no-debug-in-prod",
-      "area": "DX",
-      "severity": "minor",
-      "description": "Remove console debugging from production code unless behind env guard.",
       "trigger": {
         "type": "pattern",
         "evidence": "added-only",
@@ -231,11 +228,11 @@
           "added-line:console.trace"
         ],
         "exempt": [
-          "regex:process\\.env\\.NODE_ENV\\s*!==?\\s*['\\\"]production['\\\"]"
+          "regex:process\\.env\\.NODE_ENV\\s*!==?\\s*['\\\"]production['\\\"]",
+          "regex:process\\.env\\.NODE_ENV\\s*===\\s*['\\\"]development['\\\"]",
+          "regex:process\\.env\\.NODE_ENV\\s*===\\s*['\\\"]production['\\\"]\\s*\\)\\s*return"
         ]
-      },
-      "status": "active",
-      "version": 1
+      }
     },
     {
       "id": "build.package-scripts-safety",

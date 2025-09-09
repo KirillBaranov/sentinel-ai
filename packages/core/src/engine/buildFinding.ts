@@ -5,6 +5,7 @@ const sha1 = (s: string) => crypto.createHash('sha1').update(s).digest('hex')
 
 export function buildFinding(input: Omit<ReviewFinding, 'fingerprint'>): ReviewFinding {
   const key = `${input.rule}\n${input.file}\n${input.locator}\n${input.finding?.[0] ?? ''}`
+  console.log('check and catch me')
   return { ...input, fingerprint: sha1(key) }
 }
 

@@ -1,25 +1,27 @@
-import type { ReviewJson, BoundariesConfig } from '@sentinel/core'
-import type { ReviewProvider, ProviderReviewInput } from '@sentinel/provider-types'
-import { analyzeDiff } from '@sentinel/core'
+// packages/providers/local/src/index.ts
+import path from 'node:path'
+import { analyzeDiff, type RulesJson } from '@sentinel/core'
+import { buildProviderOutput, type ReviewProvider, type ProviderReviewInput } from '@sentinel/provider-types'
+import type { ReviewJson } from '@sentinel/core'
 
 export const localProvider: ReviewProvider = {
   name: 'local',
   async review(input: ProviderReviewInput): Promise<ReviewJson> {
     const findings = analyzeDiff({
       diffText: input.diffText,
-      rulesById: undefined,
-      rulesJson: input.rules ?? null,
-      boundaries: (input.boundaries as BoundariesConfig) ?? null,
+      rulesJson: (input.rules as RulesJson) ?? null,
+      options: {
+        debug: !!input.debug?.enabled,
+        debugDir: input.debug?.dir ? path.resolve(input.debug.dir) : undefined,
+
+        strictSignals: true,
+        capPerRulePerFile: 3,
+        capPerRuleTotal: 50,
+      },
     })
 
-    return {
-      ai_review: {
-        version: 1,
-        run_id: `run_${Date.now()}`,
-        findings,
-      }
-    }
-  }
+    return buildProviderOutput(findings)
+  },
 }
 
 export default localProvider
